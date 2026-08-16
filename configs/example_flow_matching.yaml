@@ -1,0 +1,70 @@
+# Conditional flow-matching regression on the same toy dataset. Run from the
+# repo root:
+#
+#   python examples/make_toy_dataset.py
+#   PYTHONPATH=examples hepsetreg-train --config configs/example_flow_matching.yaml
+#
+seed: 42
+
+model:
+  mode: flow_matching
+  d_model: 64
+  nhead: 4
+  num_layers: 3
+  dim_feedforward: 256
+  dropout: 0.1
+  use_type_embedding: true
+  output_dim: 2            # [system_mass, system_pt]
+  groups:
+    - name: jets
+      in_features: 5
+    - name: leptons
+      in_features: 4
+    - name: met
+      in_features: 2
+
+loss:
+  terms:
+    flow_matching:
+      weight: 1.0
+    distribution_kl:
+      bins: 64
+      sigma: 0.4
+      weight: 0.05
+      ramp_epochs: 5
+    consistency:
+      fn: "physics_hooks:toy_mass_consistency"
+      weight: 0.02
+
+data:
+  group_names: [jets, leptons, met]
+  train_file: examples/toy_data/train.h5
+  val_file: examples/toy_data/val.h5
+  test_file: examples/toy_data/test.h5
+  target_key: target
+  extra_keys: [truth_mass]
+  scaler_file: examples/toy_data/scaler.h5
+  batch_size: 128
+  num_workers: 0
+
+train:
+  optimizer: adamw
+  learning_rate: 5.0e-4
+  weight_decay: 0.01
+  max_epochs: 10
+  early_stopping_patience: 5
+  monitor_metric: val_loss
+  monitor_mode: min
+  accelerator: auto
+  devices: auto
+  output_dir: training_logs/flow_matching
+
+# Only used in flow_matching mode: training-time samples are cheap
+# (n_steps_training/n_samples_training) since they run every batch that
+# needs distribution_kl/consistency; full n_steps/n_samples are used for
+# FlowMatchingRegressor.sample()/predict_step() at inference time.
+sampling:
+  n_steps: 20
+  n_samples: 8
+  n_steps_training: 4
+  n_samples_training: 2
