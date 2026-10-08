@@ -1,5 +1,5 @@
 """
-EventDataset6: takes PreCachedDataset's "scale everything once, up front"
+EventDatasetBase: takes PreCachedDataset's "scale everything once, up front"
 idea all the way -- jets are also PADDED to a fixed `max_jets` slots per
 event at construction, using vectorized awkward calls, not a per-batch
 Python loop.
@@ -272,7 +272,7 @@ class EventDataModule(pl.LightningDataModule):
     Dataset's `__getitem__` returns is already a fixed shape, so PyTorch's
     own default collation handles batching.
 
-    `num_workers` defaults to 0 -- with EventDataset6, `__getitem__` is
+    `num_workers` defaults to 0 -- with EventDatasetBase, `__getitem__` is
     pure tensor indexing (even cheaper than EventDataset5's
     PreCachedDataset), so the case for multiprocess workers is weaker than
     ever; a prior attempt at num_workers>0 + per-worker thread-capping on
