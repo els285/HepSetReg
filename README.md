@@ -4,12 +4,7 @@ A small PyTorch Lightning package for **regressing observables (e.g. the
 ttbar invariant mass) from a variable-length set of reconstructed physics
 objects** (jets, leptons, MET, ...) using a transformer encoder.
 
-It exists to fix the main limitation of the `DIRECTOR` prototype
-(https://github.com/AlexeiM2004/DIRECTOR) while reusing its good ideas
-(MHA/MLA-style transformer regression, flow-matching training, KL-divergence
-distribution matching, a physics-consistency loss term) and the masked-token
-transformer pattern from `ReconstructionAndSB`
-(https://github.com/diegobaronm/ReconstructionAndSB):
+
 
 | | DIRECTOR | hepsetreg |
 |---|---|---|
