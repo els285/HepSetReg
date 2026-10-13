@@ -24,4 +24,4 @@ cd /mnt/iusers01/jw01/c73320es/data/HepSetReg
 # run_regression.py now lives in the hepsetreg package (src/hepsetreg/runs/)
 # -- run as a module so its `from hepsetreg....` imports resolve.
 # Uses the project's uv-managed venv directly (no conda activation needed)
-.venv/bin/python -m hepsetreg.runs.run_regression --train
+.venv/bin/python -m hepsetreg.runs.run_regression --train --config configs/run_regression.yaml

@@ -8,12 +8,21 @@ CrossAttentionDecoder (fixed learned queries) and a plain per-slot loss,
 not SlotAttention/matching.
 
 Usage:
-    python -m hepsetreg.runs.run_slot_model --train
-    python -m hepsetreg.runs.run_slot_model --predict
+    python -m hepsetreg.runs.run_slot_model --train --config configs/run_slot_model.yaml
+    python -m hepsetreg.runs.run_slot_model --predict --config configs/run_slot_model.yaml
 """
 
-import logging
 import sys
+
+from hepsetreg.config import check_args
+
+# Checked here, before the heavy imports below, so a bad command line
+# (missing --train/--predict or --config) fails in milliseconds rather than
+# only being reported after paying the full torch/pytorch_lightning/... import cost.
+if __name__ == "__main__":
+    check_args("usage: python -m hepsetreg.runs.run_slot_model --train | --predict --config <path.yaml>")
+
+import logging
 
 import awkward as ak
 import pytorch_lightning as pl
@@ -24,36 +33,25 @@ from torch.utils.data import DataLoader
 from hepsetreg.backbones.backbone import TransformerBackbone
 from hepsetreg.backbones.decoder import CrossAttentionDecoder
 from hepsetreg.backbones.head import RegressionHead, SetEventRegressor
+from hepsetreg.config import load_config
 from hepsetreg.datasets.EventDatasetSlot import SLOT_NAMES, SlotEventDataModule, SlotEventDataset, _identity_collate
 from hepsetreg.losses.shape_losses import SHAPE_LOSSES
 from hepsetreg.training.lightning_module import EventRegressionModule
 from hepsetreg.training.shape_module import ShapeRegressionModule
 
-GLOBAL_FEATURES = [
-    "global_njet", "global_nelectron", "global_nmuon",
-    "global_nbtagged", "global_met_met", "global_met_phi",
-]
-JET_FEATURES = [
-    "jet_pt", "jet_eta", "jet_phi", "jet_e", "jet_m",
-    "jet_px", "jet_py", "jet_pz", "jet_bTag",
-]
-LEPTON_FEATURES = [
-    "pt", "eta", "phi", "e", "m", "px", "py", "pz", "charge", "is_electron",
-]
-SLOT_TARGET_FEATURES = ["px", "py", "pz", "E"]
-FEATURES = {"global": GLOBAL_FEATURES, "jet": JET_FEATURES, "lepton": LEPTON_FEATURES}
-
 MODEL_KEYS = ["d_model", "n_enc_heads", "n_dec_heads", "num_enc_layers", "num_dec_layers", "n_queries"]
 
 
 def build_model(config):
-    """Builds the model architecture from a config dict (see MODEL_KEYS).
-    train() and predict() both call this with the same model settings, so a
-    saved checkpoint's weights always match the model they're loaded into."""
+    """Builds the model architecture from a config dict (see MODEL_KEYS,
+    config["features"] and config["slot_target_features"]). train() and
+    predict() both call this with the same model settings, so a saved
+    checkpoint's weights always match the model they're loaded into."""
+    features = config["features"]
     backbone = TransformerBackbone(
-        n_global_features=len(GLOBAL_FEATURES),
-        n_jet_features=len(JET_FEATURES),
-        n_lepton_features=len(LEPTON_FEATURES),
+        n_global_features=len(features["global"]),
+        n_jet_features=len(features["jet"]),
+        n_lepton_features=len(features["lepton"]),
         d_model=config["d_model"],
         nhead=config["n_enc_heads"],
         num_layers=config["num_enc_layers"],
@@ -64,7 +62,7 @@ def build_model(config):
         nhead=config["n_dec_heads"],
         num_layers=config["num_dec_layers"],
     )
-    head = RegressionHead(d_model=config["d_model"], output_dim=len(SLOT_TARGET_FEATURES))
+    head = RegressionHead(d_model=config["d_model"], output_dim=len(config["slot_target_features"]))
     return SetEventRegressor(backbone, decoder, head)
 
 
@@ -78,8 +76,8 @@ def train(config):
     torch.set_float32_matmul_precision("medium")  # allows TF32 matmuls on Ampere+ GPUs
 
     dm = SlotEventDataModule(
-        config["train_path"], config["val_path"], features=FEATURES,
-        slot_target_features=SLOT_TARGET_FEATURES, batch_size=config["batch_size"],
+        config["train_path"], config["val_path"], features=config["features"],
+        slot_target_features=config["slot_target_features"], batch_size=config["batch_size"],
     )
 
     model = build_model(config)
@@ -116,6 +114,8 @@ def train(config):
     # checkpoint: predict() needs all three to scale new data and rebuild
     # the model exactly the way this run did -- it can't guess or refit them.
     model_config = {key: config[key] for key in MODEL_KEYS}
+    model_config["features"] = config["features"]
+    model_config["slot_target_features"] = config["slot_target_features"]
     torch.save(
         {"stats": dm.stats, "max_jets": dm.train_dataset.max_jets, "model_config": model_config},
         f"{logger.log_dir}/stats.pt",
@@ -138,8 +138,9 @@ def predict(config):
     state_dict = {k.replace("._orig_mod.", "."): v for k, v in checkpoint["state_dict"].items()}
     module.load_state_dict(state_dict)
 
+    slot_target_features = model_config["slot_target_features"]
     ds = SlotEventDataset(
-        config["data_path"], features=FEATURES, slot_target_features=SLOT_TARGET_FEATURES,
+        config["data_path"], features=model_config["features"], slot_target_features=slot_target_features,
         stats=stats, max_jets=max_jets,
     )
     loader = DataLoader(ds, batch_size=config["batch_size"], shuffle=False, collate_fn=_identity_collate)
@@ -149,10 +150,10 @@ def predict(config):
     # .eval()/.to(device)/no_grad()/per-batch transfer loop needed.
     trainer = pl.Trainer(accelerator=config["accelerator"], devices=1, logger=False)
     outputs = trainer.predict(module, dataloaders=loader)  # list of per-batch {"pred", "target"} dicts
-    preds_scaled = torch.cat([out["pred"] for out in outputs])  # (N, 2, len(SLOT_TARGET_FEATURES))
+    preds_scaled = torch.cat([out["pred"] for out in outputs])  # (N, 2, len(slot_target_features))
     targets_scaled = torch.cat([out["target"] for out in outputs])
 
-    t_mean, t_std = stats["target"]  # (2, len(SLOT_TARGET_FEATURES))
+    t_mean, t_std = stats["target"]  # (2, len(slot_target_features))
     t_mean, t_std = torch.as_tensor(t_mean), torch.as_tensor(t_std)
     preds = preds_scaled * (t_std + 1e-8) + t_mean
     targets = targets_scaled * (t_std + 1e-8) + t_mean
@@ -171,7 +172,7 @@ def predict(config):
         return ak.zip(
             {
                 slot: ak.zip(
-                    {feat: ak.Array(values[:, i, j].contiguous().numpy()) for j, feat in enumerate(SLOT_TARGET_FEATURES)}
+                    {feat: ak.Array(values[:, i, j].contiguous().numpy()) for j, feat in enumerate(slot_target_features)}
                 )
                 for i, slot in enumerate(SLOT_NAMES)
             },
@@ -185,41 +186,9 @@ def predict(config):
 
 if __name__ == "__main__":
     if "--train" in sys.argv:
-        train({
-            # data
-            "train_path": "ttbar-2L_train_220926_slot.parquet",
-            "val_path": "ttbar-2L_val_220926_slot.parquet",
-            "batch_size": 4096,
-            # model architecture
-            "d_model": 128,
-            "n_enc_heads": 4,
-            "n_dec_heads": 4,
-            "num_enc_layers": 4,
-            "num_dec_layers": 4,
-            "n_queries": 2,
-            # training
-            "max_epochs": 40,
-            "learning_rate": 1e-3,
-            "lr_patience": 2,
-            "early_stop_patience": 5,
-            # shape-matching term: None (plain regression), "emd", "mmd", "kl", "mmd_joint" or "sliced_emd"
-            "shape_metric": "emd",
-            "shape_weight": 0.1,
-            "accelerator": "gpu",
-            "compile_model": True,
-        })
+        train(load_config("train"))
     elif "--predict" in sys.argv:
-        # fill in the actual run's version_N and checkpoint filename
-        # (Lightning names it "epoch=X-step=Y.ckpt" by default)
-        predict({
-            "checkpoint": "tb_logs/slot_regression/version_0/checkpoints/epoch=X-step=Y.ckpt",
-            "stats": "tb_logs/slot_regression/version_0/stats.pt",
-            "data_path": "ttbar-2L_test_220926_slot.parquet",
-            "batch_size": 4096,
-            "accelerator": "gpu",
-            "output": "ttbar-2L-slot-inference.parquet",
-            "shape_metric": "emd",  # which distance to report on the test set (None to skip)
-        })
+        predict(load_config("predict"))
     else:
-        print("usage: python -m hepsetreg.runs.run_slot_model --train | --predict")
+        print("usage: python -m hepsetreg.runs.run_slot_model --train | --predict --config <path.yaml>")
         sys.exit(1)

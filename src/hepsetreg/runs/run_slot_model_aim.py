@@ -4,13 +4,22 @@ instead of TensorBoard: hyperparameters and metrics for every run are
 written to an Aim repo (./aim_logs here) you can browse with `aim up`.
 
 Usage:
-    python -m hepsetreg.runs.run_slot_model_aim --train
-    python -m hepsetreg.runs.run_slot_model_aim --predict
+    python -m hepsetreg.runs.run_slot_model_aim --train --config configs/run_slot_model_aim.yaml
+    python -m hepsetreg.runs.run_slot_model_aim --predict --config configs/run_slot_model_aim.yaml
 """
+
+import sys
+
+from hepsetreg.config import check_args
+
+# Checked here, before the heavy imports below, so a bad command line
+# (missing --train/--predict or --config) fails in milliseconds rather than
+# only being reported after paying the full torch/pytorch_lightning/aim/... import cost.
+if __name__ == "__main__":
+    check_args("usage: python -m hepsetreg.runs.run_slot_model_aim --train | --predict --config <path.yaml>")
 
 import logging
 import os
-import sys
 
 import aim
 import awkward as ak
@@ -22,36 +31,23 @@ from torch.utils.data import DataLoader
 from hepsetreg.backbones.backbone import TransformerBackbone
 from hepsetreg.backbones.decoder import CrossAttentionDecoder
 from hepsetreg.backbones.head import RegressionHead, SetEventRegressor
+from hepsetreg.config import load_config
 from hepsetreg.datasets.EventDatasetSlot import SLOT_NAMES, SlotEventDataModule, SlotEventDataset, _identity_collate
 from hepsetreg.training.lightning_module import EventRegressionModule
 
-GLOBAL_FEATURES = [
-    "global_njet", "global_nelectron", "global_nmuon",
-    "global_nbtagged", "global_met_met", "global_met_phi",
-]
-JET_FEATURES = [
-    "jet_pt", "jet_eta", "jet_phi", "jet_e", "jet_m",
-    "jet_px", "jet_py", "jet_pz", "jet_bTag",
-]
-LEPTON_FEATURES = [
-    "pt", "eta", "phi", "e", "m", "px", "py", "pz", "charge", "is_electron",
-]
-SLOT_TARGET_FEATURES = ["px", "py", "pz", "E"]
-FEATURES = {"global": GLOBAL_FEATURES, "jet": JET_FEATURES, "lepton": LEPTON_FEATURES}
-
-AIM_REPO = "aim_logs"
-EXPERIMENT_NAME = "slot_regression"  # shared by train() and predict() so both show up together in Aim
 MODEL_KEYS = ["d_model", "n_enc_heads", "n_dec_heads", "num_enc_layers", "num_dec_layers", "n_queries"]
 
 
 def build_model(config):
-    """Builds the model architecture from a config dict (see MODEL_KEYS).
-    train() and predict() both call this with the same model settings, so a
-    saved checkpoint's weights always match the model they're loaded into."""
+    """Builds the model architecture from a config dict (see MODEL_KEYS,
+    config["features"] and config["slot_target_features"]). train() and
+    predict() both call this with the same model settings, so a saved
+    checkpoint's weights always match the model they're loaded into."""
+    features = config["features"]
     backbone = TransformerBackbone(
-        n_global_features=len(GLOBAL_FEATURES),
-        n_jet_features=len(JET_FEATURES),
-        n_lepton_features=len(LEPTON_FEATURES),
+        n_global_features=len(features["global"]),
+        n_jet_features=len(features["jet"]),
+        n_lepton_features=len(features["lepton"]),
         d_model=config["d_model"],
         nhead=config["n_enc_heads"],
         num_layers=config["num_enc_layers"],
@@ -62,7 +58,7 @@ def build_model(config):
         nhead=config["n_dec_heads"],
         num_layers=config["num_dec_layers"],
     )
-    head = RegressionHead(d_model=config["d_model"], output_dim=len(SLOT_TARGET_FEATURES))
+    head = RegressionHead(d_model=config["d_model"], output_dim=len(config["slot_target_features"]))
     return SetEventRegressor(backbone, decoder, head)
 
 
@@ -71,8 +67,8 @@ def train(config):
     torch.set_float32_matmul_precision("medium")  # see train.py -- allows TF32 matmuls on Ampere+ GPUs
 
     dm = SlotEventDataModule(
-        config["train_path"], config["val_path"], features=FEATURES,
-        slot_target_features=SLOT_TARGET_FEATURES, batch_size=config["batch_size"],
+        config["train_path"], config["val_path"], features=config["features"],
+        slot_target_features=config["slot_target_features"], batch_size=config["batch_size"],
     )
 
     model = build_model(config)
@@ -93,7 +89,7 @@ def train(config):
 
     # log_system_params=False: Aim's system-package tracking hard-depends on
     # pkg_resources, which recent setuptools versions no longer ship.
-    logger = AimLogger(experiment=EXPERIMENT_NAME, repo=AIM_REPO, log_system_params=False)
+    logger = AimLogger(experiment=config["experiment_name"], repo=config["aim_repo"], log_system_params=False)
     logging.getLogger("torch.fx.experimental.symbolic_shapes").setLevel(logging.ERROR)
 
     # Write the whole config dict to the Aim run BEFORE training starts, so
@@ -113,6 +109,8 @@ def train(config):
     run_dir = os.path.dirname(trainer.checkpoint_callback.dirpath)
     stats_path = os.path.join(run_dir, "stats.pt")
     model_config = {key: config[key] for key in MODEL_KEYS}
+    model_config["features"] = config["features"]
+    model_config["slot_target_features"] = config["slot_target_features"]
     torch.save({"stats": dm.stats, "max_jets": dm.train_dataset.max_jets, "model_config": model_config}, stats_path)
     print(f"done training. checkpoint + stats saved under {run_dir}")
 
@@ -134,8 +132,9 @@ def predict(config):
     state_dict = {k.replace("._orig_mod.", "."): v for k, v in checkpoint["state_dict"].items()}
     module.load_state_dict(state_dict)
 
+    slot_target_features = model_config["slot_target_features"]
     ds = SlotEventDataset(
-        config["data_path"], features=FEATURES, slot_target_features=SLOT_TARGET_FEATURES,
+        config["data_path"], features=model_config["features"], slot_target_features=slot_target_features,
         stats=stats, max_jets=max_jets,
     )
     loader = DataLoader(ds, batch_size=config["batch_size"], shuffle=False, collate_fn=_identity_collate)
@@ -145,10 +144,10 @@ def predict(config):
     # .eval()/.to(device)/no_grad()/per-batch transfer loop needed.
     trainer = pl.Trainer(accelerator=config["accelerator"], devices=1, logger=False)
     outputs = trainer.predict(module, dataloaders=loader)  # list of per-batch {"pred", "target"} dicts
-    preds_scaled = torch.cat([out["pred"] for out in outputs])  # (N, 2, len(SLOT_TARGET_FEATURES))
+    preds_scaled = torch.cat([out["pred"] for out in outputs])  # (N, 2, len(slot_target_features))
     targets_scaled = torch.cat([out["target"] for out in outputs])
 
-    t_mean, t_std = stats["target"]  # (2, len(SLOT_TARGET_FEATURES))
+    t_mean, t_std = stats["target"]  # (2, len(slot_target_features))
     t_mean, t_std = torch.as_tensor(t_mean), torch.as_tensor(t_std)
     preds = preds_scaled * (t_std + 1e-8) + t_mean
     targets = targets_scaled * (t_std + 1e-8) + t_mean
@@ -165,7 +164,7 @@ def predict(config):
         return ak.zip(
             {
                 slot: ak.zip(
-                    {feat: ak.Array(values[:, i, j].contiguous().numpy()) for j, feat in enumerate(SLOT_TARGET_FEATURES)}
+                    {feat: ak.Array(values[:, i, j].contiguous().numpy()) for j, feat in enumerate(slot_target_features)}
                 )
                 for i, slot in enumerate(SLOT_NAMES)
             },
@@ -180,7 +179,7 @@ def predict(config):
     # evaluation results are tracked the same way training runs are. Aim's
     # hparams store only accepts native/JSON-like types, so stringify
     # anything else instead of letting a stray value crash the run.
-    run = aim.Run(repo=AIM_REPO, experiment=EXPERIMENT_NAME, log_system_params=False)
+    run = aim.Run(repo=config["aim_repo"], experiment=config["experiment_name"], log_system_params=False)
     run.add_tag("predict")  # distinguishes this from training runs within the shared experiment
     run["hparams"] = {k: v if isinstance(v, (int, float, str, bool, type(None))) else str(v) for k, v in config.items()}
     for i, slot in enumerate(SLOT_NAMES):
@@ -188,47 +187,11 @@ def predict(config):
     run.close()
 
 
-# The config dict is defined here, BEFORE it's used, rather than inline in
-# the train()/predict() call below -- so it's easy to find, read, and
-# change in one place, and it's exactly what gets written to the Aim log.
-TRAIN_CONFIG = {
-    # data
-    "train_path": "ttbar-2L_train_220926_slot.parquet",
-    "val_path": "ttbar-2L_val_220926_slot.parquet",
-    "batch_size": 4096,
-    # model architecture
-    "d_model": 128,
-    "n_enc_heads": 4,
-    "n_dec_heads": 4,
-    "num_enc_layers": 4,
-    "num_dec_layers": 4,
-    "n_queries": 2,
-    # training
-    "max_epochs": 20,
-    "learning_rate": 1e-3,
-    "lr_patience": 2,
-    "early_stop_patience": 5,
-    "accelerator": "gpu",
-    "compile_model": True,
-}
-
-# fill in the actual run's hash and checkpoint filename (Lightning names it
-# "epoch=X-step=Y.ckpt" by default) from your training output
-PREDICT_CONFIG = {
-    "checkpoint": "aim_logs/.aim/slot_regression/<run_hash>/checkpoints/epoch=X-step=Y.ckpt",
-    "stats": "aim_logs/.aim/slot_regression/<run_hash>/stats.pt",
-    "data_path": "ttbar-2L_test_220926_slot.parquet",
-    "batch_size": 4096,
-    "accelerator": "gpu",
-    "output": "ttbar-2L-slot-inference.parquet",
-}
-
-
 if __name__ == "__main__":
     if "--train" in sys.argv:
-        train(TRAIN_CONFIG)
+        train(load_config("train"))
     elif "--predict" in sys.argv:
-        predict(PREDICT_CONFIG)
+        predict(load_config("predict"))
     else:
-        print("usage: python -m hepsetreg.runs.run_slot_model_aim --train | --predict")
+        print("usage: python -m hepsetreg.runs.run_slot_model_aim --train | --predict --config <path.yaml>")
         sys.exit(1)

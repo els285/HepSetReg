@@ -17,6 +17,8 @@ src/hepsetreg/
   training/    LightningModules wiring a model + loss into a training loop
   physics/     spin-correlation observables and ROOT -> parquet data prep
   runs/        standalone train/predict scripts, one per model + task
+  config.py    the --config <path.yaml> loader every run script uses
+configs/       one YAML file per run script (see "Config files" below)
 ```
 
 **Datasets** (`datasets/`) read parquet files with an `inputs` group
@@ -78,9 +80,9 @@ everything, and pad jets to a fixed count per batch.
   ntuples.
 
 **Runs** (`runs/`) -- each script is self-contained: a `build_model`, a
-`train`, a `predict`, and a config dict defined directly in `if __name__ ==
-"__main__":`. No argparse beyond the `--train`/`--predict` switch; edit the
-config dict in the file to change hyperparameters.
+`train`, and a `predict`. No argparse beyond the `--train`/`--predict`
+switch and a required `--config <path.yaml>` -- see "Config files" below
+for what goes in that file.
 
 | script | backbone | task |
 |---|---|---|
@@ -93,8 +95,33 @@ config dict in the file to change hyperparameters.
 Every script caps `torch` to 4 threads and sets TF32 matmul precision
 regardless of model size -- this machine has many CPU cores, and letting
 PyTorch use all of them for small per-op work is much slower, not faster.
-`compile_model: True` in the config wraps the model in `torch.compile`;
+`compile_model: true` in the config wraps the model in `torch.compile`;
 `precision="bf16-mixed"` is set in the `Trainer` for GPU runs.
+
+## Config files
+
+Each run script reads one YAML file, given with `--config <path.yaml>`.
+`configs/` has one per script, matching the script's name
+(`configs/run_regression.yaml` for `run_regression.py`, and so on) --
+start from those. A config file has three kinds of section:
+
+- `train:` / `predict:` -- everything specific to that stage: data paths,
+  hyperparameters, `accelerator`, and (for `predict:`) the checkpoint/stats
+  paths and output file.
+- `features:` -- the field names to read from the parquet file (global/jet/
+  lepton/target, or jet_vector/jet_scalar/... for `run_regression_ParT.py`).
+  Shared by both stages, so it only needs to be written once.
+- anything else at the top level (`slot_target_features:` for the two slot
+  scripts, `aim_repo:`/`experiment_name:` for `run_slot_model_aim.py`) is
+  also shared by both stages.
+
+`train()` saves the `features:` section (and `slot_target_features:`,
+where it applies) into `stats.pt` alongside the checkpoint, so `predict()`
+always rebuilds the model with the exact field list it was trained with,
+even if you've since edited the config file.
+
+Point `--config` at a copy of the file to try different hyperparameters
+without touching the original.
 
 ## Setup
 
@@ -124,22 +151,22 @@ Each run script is a module inside the `hepsetreg` package, so it's run
 with `-m`, not as a bare file path:
 
 ```bash
-uv run python -m hepsetreg.runs.run_regression --train
-uv run python -m hepsetreg.runs.run_regression --predict
+uv run python -m hepsetreg.runs.run_regression --train --config configs/run_regression.yaml
+uv run python -m hepsetreg.runs.run_regression --predict --config configs/run_regression.yaml
 ```
 
 Same pattern for the others:
 
 ```bash
-uv run python -m hepsetreg.runs.run_regression_ParT --train
-uv run python -m hepsetreg.runs.run_slot_model --train
-uv run python -m hepsetreg.runs.run_slot_model_aim --train
-uv run python -m hepsetreg.runs.run_regression_flow --train
+uv run python -m hepsetreg.runs.run_regression_ParT --train --config configs/run_regression_ParT.yaml
+uv run python -m hepsetreg.runs.run_slot_model --train --config configs/run_slot_model.yaml
+uv run python -m hepsetreg.runs.run_slot_model_aim --train --config configs/run_slot_model_aim.yaml
+uv run python -m hepsetreg.runs.run_regression_flow --train --config configs/run_regression_flow.yaml
 ```
 
-Before `--predict` will work, open the script and fill in the checkpoint
-and stats paths it printed at the end of training (Lightning names
-checkpoints `epoch=X-step=Y.ckpt`).
+Before `--predict` will work, open the config file and fill in the
+checkpoint and stats paths that training printed at the end (Lightning
+names checkpoints `epoch=X-step=Y.ckpt`).
 
 To build the parquet files from ROOT ntuples (edit the path/filenames at
 the bottom of the file first):
@@ -165,7 +192,7 @@ uv run aim up --repo aim_logs                # run_slot_model_aim
 GPU, activates nothing (it calls `.venv/bin/python` directly), and runs:
 
 ```bash
-.venv/bin/python -m hepsetreg.runs.run_regression --train
+.venv/bin/python -m hepsetreg.runs.run_regression --train --config configs/run_regression.yaml
 ```
 
 Submit it with:
@@ -175,10 +202,10 @@ sbatch submit_run_regression
 ```
 
 For a different script, copy the file and change the partition/job name at
-the top and the module path on the last line, e.g.:
+the top and the module path + config on the last line, e.g.:
 
 ```bash
-.venv/bin/python -m hepsetreg.runs.run_slot_model --train
+.venv/bin/python -m hepsetreg.runs.run_slot_model --train --config configs/run_slot_model.yaml
 ```
 
 Check `--mem` before submitting a training run on the full dataset -- the

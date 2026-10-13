@@ -4,12 +4,21 @@ task -- combines train.py and inference.py into one script, in the same
 style as run_slot_model.py / run_regression_ParT.py.
 
 Usage:
-    python -m hepsetreg.runs.run_regression --train
-    python -m hepsetreg.runs.run_regression --predict
+    python -m hepsetreg.runs.run_regression --train --config configs/run_regression.yaml
+    python -m hepsetreg.runs.run_regression --predict --config configs/run_regression.yaml
 """
 
-import logging
 import sys
+
+from hepsetreg.config import check_args
+
+# Checked here, before the heavy imports below, so a bad command line
+# (missing --train/--predict or --config) fails in milliseconds rather than
+# only being reported after paying the full torch/pytorch_lightning/... import cost.
+if __name__ == "__main__":
+    check_args("usage: python -m hepsetreg.runs.run_regression --train | --predict --config <path.yaml>")
+
+import logging
 
 import awkward as ak
 import pytorch_lightning as pl
@@ -19,42 +28,30 @@ from torch.utils.data import DataLoader
 
 from hepsetreg.backbones.backbone import TransformerBackbone
 from hepsetreg.backbones.head import EventRegressor, RegressionHead
+from hepsetreg.config import load_config
 from hepsetreg.datasets.EventDatasetBase import EventDataModule, EventDataset, _identity_collate
 from hepsetreg.losses.shape_losses import SHAPE_LOSSES
 from hepsetreg.training.lightning_module import EventRegressionModule
 from hepsetreg.training.shape_module import ShapeRegressionModule
 
-GLOBAL_FEATURES = [
-    "global_njet", "global_nelectron", "global_nmuon",
-    "global_nbtagged", "global_met_met", "global_met_phi",
-]
-JET_FEATURES = [
-    "jet_pt", "jet_eta", "jet_phi", "jet_e", "jet_m",
-    "jet_px", "jet_py", "jet_pz", "jet_bTag",
-]
-LEPTON_FEATURES = [
-    "pt", "eta", "phi", "e", "m", "px", "py", "pz", "charge", "is_electron",
-]
-TARGET_FEATURES = ["ttbar_mass", "cos_phi", "cos_han"]
-
-FEATURES = {"global": GLOBAL_FEATURES, "jet": JET_FEATURES, "lepton": LEPTON_FEATURES, "target": TARGET_FEATURES}
-
 MODEL_KEYS = ["d_model", "nhead", "num_layers"]
 
 
 def build_model(config):
-    """Builds the model architecture from a config dict (see MODEL_KEYS).
-    train() and predict() both call this with the same model settings, so a
-    saved checkpoint's weights always match the model they're loaded into."""
+    """Builds the model architecture from a config dict (see MODEL_KEYS and
+    config["features"]). train() and predict() both call this with the same
+    model settings, so a saved checkpoint's weights always match the model
+    they're loaded into."""
+    features = config["features"]
     backbone = TransformerBackbone(
-        n_global_features=len(GLOBAL_FEATURES),
-        n_jet_features=len(JET_FEATURES),
-        n_lepton_features=len(LEPTON_FEATURES),
+        n_global_features=len(features["global"]),
+        n_jet_features=len(features["jet"]),
+        n_lepton_features=len(features["lepton"]),
         d_model=config["d_model"],
         nhead=config["nhead"],
         num_layers=config["num_layers"],
     )
-    head = RegressionHead(d_model=config["d_model"], output_dim=len(TARGET_FEATURES))
+    head = RegressionHead(d_model=config["d_model"], output_dim=len(features["target"]))
     return EventRegressor(backbone, head)
 
 
@@ -67,7 +64,9 @@ def train(config):
     torch.set_num_threads(4)
     torch.set_float32_matmul_precision("medium")  # allows TF32 matmuls on Ampere+ GPUs
 
-    dm = EventDataModule(config["train_path"], config["val_path"], features=FEATURES, batch_size=config["batch_size"])
+    dm = EventDataModule(
+        config["train_path"], config["val_path"], features=config["features"], batch_size=config["batch_size"],
+    )
 
     model = build_model(config)
     if config["compile_model"]:
@@ -103,6 +102,7 @@ def train(config):
     # checkpoint: predict() needs all three to scale new data and rebuild
     # the model exactly the way this run did -- it can't guess or refit them.
     model_config = {key: config[key] for key in MODEL_KEYS}
+    model_config["features"] = config["features"]
     torch.save(
         {"stats": dm.stats, "max_jets": dm.train_dataset.max_jets, "model_config": model_config},
         f"{logger.log_dir}/stats.pt",
@@ -125,7 +125,8 @@ def predict(config):
     state_dict = {k.replace("._orig_mod.", "."): v for k, v in checkpoint["state_dict"].items()}
     module.load_state_dict(state_dict)
 
-    ds = EventDataset(config["data_path"], features=FEATURES, stats=stats, max_jets=max_jets)
+    target_features = model_config["features"]["target"]
+    ds = EventDataset(config["data_path"], features=model_config["features"], stats=stats, max_jets=max_jets)
     loader = DataLoader(ds, batch_size=config["batch_size"], shuffle=False, collate_fn=_identity_collate)
 
     # Trainer.predict() puts the module in eval mode, disables gradients,
@@ -142,12 +143,12 @@ def predict(config):
     targets = targets_scaled * (t_std + 1e-8) + t_mean
 
     mae = (preds - targets).abs().mean(dim=0)  # mean over events, per target feature
-    for name, value in zip(TARGET_FEATURES, mae):
+    for name, value in zip(target_features, mae):
         print(f"{name:12s} MAE: {value:.4f}")
 
     if config["shape_metric"] is not None:
         shape_loss_fn = SHAPE_LOSSES[config["shape_metric"]]
-        for i, name in enumerate(TARGET_FEATURES):
+        for i, name in enumerate(target_features):
             shape = shape_loss_fn(preds_scaled[:, i:i + 1], targets_scaled[:, i:i + 1])
             print(f"{name:12s} {config['shape_metric']} shape distance (z-scored): {shape:.4f}")
 
@@ -155,8 +156,8 @@ def predict(config):
     # arr.targets.ttbar_mass, arr.predictions.ttbar_mass
     # .contiguous(): a column slice of a 2D tensor is a strided,
     # non-contiguous view, which pyarrow rejects with "ndarray is not contiguous"
-    target_fields = {name: ak.Array(targets[:, i].contiguous().numpy()) for i, name in enumerate(TARGET_FEATURES)}
-    pred_fields = {name: ak.Array(preds[:, i].contiguous().numpy()) for i, name in enumerate(TARGET_FEATURES)}
+    target_fields = {name: ak.Array(targets[:, i].contiguous().numpy()) for i, name in enumerate(target_features)}
+    pred_fields = {name: ak.Array(preds[:, i].contiguous().numpy()) for i, name in enumerate(target_features)}
     out = ak.zip({"targets": ak.zip(target_fields), "predictions": ak.zip(pred_fields)}, depth_limit=1)
     ak.to_parquet(out, config["output"])
     print(f"saved predictions to {config['output']}")
@@ -164,38 +165,9 @@ def predict(config):
 
 if __name__ == "__main__":
     if "--train" in sys.argv:
-        train({
-            # data
-            "train_path": "ttbar-2L_train_051026.parquet",
-            "val_path": "ttbar-2L_val_051026.parquet",
-            "batch_size": 4096,
-            # model architecture
-            "d_model": 128,
-            "nhead": 8,
-            "num_layers": 6,
-            # training
-            "max_epochs": 50,
-            "learning_rate": 1e-3,
-            "lr_patience": 2,
-            "early_stop_patience": 5,
-            # shape-matching term: None (plain regression), "emd", "mmd", "kl", "mmd_joint" or "sliced_emd"
-            "shape_metric": "emd",
-            "shape_weight": 0.1,
-            "accelerator": "gpu",
-            "compile_model": True,
-        })
+        train(load_config("train"))
     elif "--predict" in sys.argv:
-        # fill in the actual run's version_N and checkpoint filename
-        # (Lightning names it "epoch=X-step=Y.ckpt" by default)
-        predict({
-            "checkpoint": "tb_logs/event_regression/version_39/checkpoints/epoch=49-step=57300.ckpt",
-            "stats": "tb_logs/event_regression/version_39/stats.pt",
-            "data_path": "ttbar-2L_test_051026.parquet",
-            "batch_size": 4096,
-            "accelerator": "gpu",
-            "output": "ttbar-2L-inference.parquet",
-            "shape_metric": "emd",  # which distance to report on the test set (None to skip)
-        })
+        predict(load_config("predict"))
     else:
-        print("usage: python -m hepsetreg.runs.run_regression --train | --predict")
+        print("usage: python -m hepsetreg.runs.run_regression --train | --predict --config <path.yaml>")
         sys.exit(1)
