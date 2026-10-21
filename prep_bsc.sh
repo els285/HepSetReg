@@ -9,7 +9,22 @@
 #   ./prep_bsc.sh
 
 set -euo pipefail
-trap 'echo "prep_bsc.sh failed at line $LINENO -- see the message above for which step this was." >&2' ERR
+
+# Colors only when writing to an actual terminal -- if output is redirected
+# to a file or piped somewhere, the escape codes would just be garbage in
+# the log instead of colors, so fall back to plain text there.
+if [ -t 1 ]; then
+    RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
+    CYAN=$'\033[0;36m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
+else
+    RED=''; GREEN=''; YELLOW=''; CYAN=''; BOLD=''; RESET=''
+fi
+step()    { echo "${BOLD}${CYAN}== $* ==${RESET}"; }
+ok()      { echo "${GREEN}$*${RESET}"; }
+warn()    { echo "${YELLOW}$*${RESET}"; }
+err()     { echo "${RED}ERROR: $*${RESET}" >&2; }
+
+trap 'err "prep_bsc.sh failed at line $LINENO -- see the message above for which step this was."' ERR
 
 DATA_URL="https://cernbox.cern.ch/s/EBakp1JpfphYRcM/download"
 DATA_DIR="datasets"
@@ -19,18 +34,18 @@ MIN_DATA_BYTES=1000000  # a truncated/failed download would be far smaller than 
 # ---- sanity check: are we in the right place? ----
 # (the most likely real mistake: running this before `cd`-ing into the clone)
 if [ ! -f "pyproject.toml" ]; then
-    echo "ERROR: no pyproject.toml here. Run this script from inside the" >&2
-    echo "HepSetReg directory you just cloned (cd HepSetReg first)." >&2
+    err "no pyproject.toml here. Run this script from inside the"
+    echo "${RED}HepSetReg directory you just cloned (cd HepSetReg first).${RESET}" >&2
     exit 1
 fi
 
 # ---- step 1: install uv (skip if already installed) ----
-echo "== Step 1: uv =="
+step "Step 1: uv"
 if command -v uv &> /dev/null; then
-    echo "uv already installed ($(command -v uv)), skipping install."
+    ok "uv already installed ($(command -v uv)), skipping install."
 else
     if ! command -v curl &> /dev/null; then
-        echo "ERROR: curl is not installed. Install curl first, then re-run this script." >&2
+        err "curl is not installed. Install curl first, then re-run this script."
         exit 1
     fi
     curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -41,26 +56,26 @@ else
 fi
 
 if ! command -v uv &> /dev/null; then
-    echo "ERROR: uv install finished but 'uv' still isn't on PATH." >&2
-    echo "Open a new terminal (so your shell picks up the updated PATH) and re-run this script." >&2
+    err "uv install finished but 'uv' still isn't on PATH."
+    warn "Open a new terminal (so your shell picks up the updated PATH) and re-run this script."
     exit 1
 fi
-echo "uv OK: $(uv --version)"
+ok "uv OK: $(uv --version)"
 
 # ---- step 2: download the test data (skip if already present) ----
-echo "== Step 2: test data =="
+step "Step 2: test data"
 mkdir -p "$DATA_DIR"
 
 if [ -f "$DATA_FILE" ] && [ "$(stat -c%s "$DATA_FILE" 2>/dev/null || stat -f%z "$DATA_FILE")" -ge "$MIN_DATA_BYTES" ]; then
-    echo "$DATA_FILE already downloaded, skipping."
+    ok "$DATA_FILE already downloaded, skipping."
 else
     echo "Downloading test data to $DATA_FILE ..."
     # --fail: treat HTTP error responses (404, 403, ...) as failures instead of
     # silently saving the error page as if it were the data file.
     # --retry: tolerate a flaky connection.
     if ! curl --fail --retry 3 -L -o "$DATA_FILE" "$DATA_URL"; then
-        echo "ERROR: download failed. Check your network connection and that" >&2
-        echo "$DATA_URL is still a valid link." >&2
+        err "download failed. Check your network connection and that"
+        echo "${RED}$DATA_URL is still a valid link.${RESET}" >&2
         rm -f "$DATA_FILE"
         exit 1
     fi
@@ -68,31 +83,32 @@ fi
 
 actual_bytes=$(stat -c%s "$DATA_FILE" 2>/dev/null || stat -f%z "$DATA_FILE")
 if [ "$actual_bytes" -lt "$MIN_DATA_BYTES" ]; then
-    echo "ERROR: $DATA_FILE is only $actual_bytes bytes -- looks like a failed" >&2
-    echo "or truncated download, not real data (re-run this script to retry)." >&2
+    err "$DATA_FILE is only $actual_bytes bytes -- looks like a failed"
+    echo "${RED}or truncated download, not real data (re-run this script to retry).${RESET}" >&2
     rm -f "$DATA_FILE"
     exit 1
 fi
-echo "Data file OK: $DATA_FILE ($actual_bytes bytes)"
+ok "Data file OK: $DATA_FILE ($actual_bytes bytes)"
 
 # ---- step 3: install the Python environment ----
 # --extra dev: also installs ipykernel/jupyter/matplotlib/pytest, since
 # students will want notebooks and plotting, not just the bare training
 # scripts. Plain `uv sync` *removes* those packages if anything had already
 # installed them, rather than just skipping them -- always use --extra dev here.
-echo "== Step 3: uv sync =="
+step "Step 3: uv sync"
 if ! uv sync --extra dev; then
-    echo "ERROR: 'uv sync' failed -- see the error above. A slow/interrupted" >&2
-    echo "network is the most common cause; just re-run this script." >&2
+    err "'uv sync' failed -- see the error above. A slow/interrupted"
+    echo "${RED}network is the most common cause; just re-run this script.${RESET}" >&2
     exit 1
 fi
+ok "Environment synced."
 
 # ---- step 4: prove the whole chain actually works ----
 # Loads the downloaded file through the project's own dataset-loading code,
 # using the same field names configs/run_regression.yaml uses -- this checks
 # not just "is the environment installed" but "can the package actually read
 # real data", which is the thing that's actually going to be run.
-echo "== Step 4: test run =="
+step "Step 4: test run"
 uv run python - "$DATA_FILE" <<'PY'
 import sys
 import yaml
@@ -112,5 +128,5 @@ print(f"  mean {features['target'][0]}: {target_arr[:, 0].mean():.1f}")
 PY
 
 echo
-echo "All done. The environment is set up and the test data loads correctly."
+ok "All done. The environment is set up and the test data loads correctly."
 echo "See README.md for how to train and predict."
