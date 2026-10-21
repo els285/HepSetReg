@@ -86,8 +86,16 @@ If you want to experiment with hyperparameters (`learning_rate`,
 `max_epochs`, `d_model`, ...), edit the `train:` section directly, or make a
 copy of the file and point `--config` at your copy instead.
 
-## 🟨 3. Train
+## 🟨 3. Run model training interactively
+When we ssh in to CSF, we are in a login node that does not have direct access to a GPU. 
+From this node, we must tunnel into a worker node with a GPU. Run
+```
+./get_interactive_gpu.sh
+```
+to access a GPU node. 
+This can sometimes take a long time depending on how busy the cluster is; for this reason we can also use a service that runs things automatically for us - see `Running on cluster` section below.
 
+When on the GPU node, you train a model via:
 ```bash
 uv run python -m hepsetreg.runs.run_regression --train --config configs/run_regression.yaml
 ```
