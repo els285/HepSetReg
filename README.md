@@ -1,212 +1,134 @@
-# hepsetreg
+# hepsetreg (bsc branch)
 
-Regresses observables from ttbar dilepton events (reco jets, leptons, MET)
-using a transformer encoder over the variable-length set of objects in each
-event. Targets range from system-level kinematics (ttbar mass, spin
-correlation observables) to per-particle four-momenta (top/antitop), and
-training can use a plain regression head, a cross-attention decoder for
-per-object prediction, or a conditional flow-matching head.
+Predicts the ttbar invariant mass (`ttbar_mass`) from the reconstructed
+jets, leptons and MET of a ttbar dilepton event, using a transformer that
+reads the variable-length set of objects in each event.
 
-## What's here
+This branch has one script (`run_regression.py`) and one config file
+(`configs/run_regression.yaml`), so there's nothing to choose between --
+just follow the steps below. (The full project, with several other
+model/task combinations, is on the `config` branch.)
 
-```
-src/hepsetreg/
-  datasets/    parquet-backed Dataset/DataModule classes
-  backbones/   encoders, decoder, regression heads, flow-matching velocity fields
-  losses/      per-event regression losses and batch shape-matching losses
-  training/    LightningModules wiring a model + loss into a training loop
-  physics/     spin-correlation observables and ROOT -> parquet data prep
-  runs/        standalone train/predict scripts, one per model + task
-  config.py    the --config <path.yaml> loader every run script uses
-configs/       one YAML file per run script (see "Config files" below)
-```
+## 1. Set up the environment
 
-**Datasets** (`datasets/`) read parquet files with an `inputs` group
-(global features, jets, electrons, muons) and a `targets` group, z-score
-everything, and pad jets to a fixed count per batch.
-- `EventDatasetBase.py` -- `EventDataset` / `EventDataModule`. The shared
-  base: fixed global features, padded jets, exactly-two leptons, one target
-  vector per event.
-- `EventDatasetSlot.py` -- `SlotEventDataset` / `SlotEventDataModule`. Same
-  inputs, but the target is per-slot: index 0 is always the top, index 1
-  the antitop (a fixed physical order, not an arbitrary one).
-- `EventVectorScalarDataset.py` -- splits jet/lepton features into
-  4-momentum ("vector") and auxiliary ("scalar") groups, for backbones that
-  need real physical momenta to compute pairwise quantities.
-
-**Backbones** (`backbones/`):
-- `backbone.py` / `backbone_cls.py` -- `TransformerBackbone` (attention
-  pooling) and `TransformerBackboneCLS` (CLS-token pooling). Plain
-  self-attention over global + jet + lepton tokens.
-- `backbone_ParT.py` -- `TransformerBackboneParT`, which adds a
-  Particle-Transformer-style pairwise attention bias computed from each
-  jet/lepton's 4-momentum (angular separation, relative pT, pairwise
-  invariant mass), on top of the same token setup.
-- `decoder.py` -- `CrossAttentionDecoder`: N fixed learned queries
-  cross-attending over the encoded tokens, for predicting N objects with a
-  fixed, known order (e.g. top then antitop).
-- `slot_attention.py` -- `SlotAttention` / `FixedSlotAttention`, an
-  alternative to the decoder for permutation-invariant or fixed-slot
-  per-object prediction.
-- `head.py` -- `RegressionHead` (MLP) plus the wrapper classes that combine
-  a backbone (+ decoder/slot-attention) with a head: `EventRegressor`,
-  `SetEventRegressor`, `SlotEventRegressor`.
-- `flow_matching.py` -- conditional flow matching: three interchangeable
-  velocity-field architectures (`DNNVelocityField`, `TransformerVelocityField`,
-  `DiTVelocityField`), `flow_matching_loss`, `sample_flow` (ODE sampler), and
-  `FlowRegressor` (backbone + velocity field).
-
-**Losses** (`losses/`):
-- `losses.py` -- `RegressionLoss` (MSE/Huber/MAE) and `SetRegressionLoss`
-  (Hungarian matching, for permutation-invariant set prediction).
-- `shape_losses.py` -- distances between the *distribution* of predictions
-  and targets over a batch, not just the per-event error: `emd`, `mmd`,
-  `kl` (per output column), plus `mmd_joint` and `sliced_emd` (matching the
-  joint distribution across columns, so correlations between targets are
-  constrained too).
-
-**Training** (`training/`):
-- `lightning_module.py` -- `EventRegressionModule` (point regression) and
-  `FlowMatchingModule` (flow matching, with ODE-sampled validation/predict).
-  Both support an optional LR scheduler via `scheduler_fn`.
-- `shape_module.py` -- `ShapeRegressionModule`, `EventRegressionModule` plus
-  a shape-matching term from `shape_losses.py`.
-
-**Physics** (`physics/`):
-- `reco_spins.py` -- boosts tops/leptons into the ttbar rest frame and
-  computes the helicity-basis spin-correlation observables (`cos_phi`,
-  `cos_han`, and the K/N/R projections).
-- `prep_data.py` -- builds the parquet files this package reads, from ROOT
-  ntuples.
-
-**Runs** (`runs/`) -- each script is self-contained: a `build_model`, a
-`train`, and a `predict`. No argparse beyond the `--train`/`--predict`
-switch and a required `--config <path.yaml>` -- see "Config files" below
-for what goes in that file.
-
-| script | backbone | task |
-|---|---|---|
-| `run_regression.py` | `TransformerBackbone` | system-level targets (ttbar mass, spin observables) |
-| `run_regression_ParT.py` | `TransformerBackboneParT` | same task, with the pairwise attention bias |
-| `run_regression_flow.py` | `TransformerBackbone` + flow matching | same task, sampled rather than predicted directly |
-| `run_slot_model.py` | `TransformerBackbone` + `CrossAttentionDecoder` | per-object (top, antitop) four-momenta |
-| `run_slot_model_aim.py` | same as `run_slot_model.py` | same, logged to Aim instead of TensorBoard |
-
-Every script caps `torch` to 4 threads and sets TF32 matmul precision
-regardless of model size -- this machine has many CPU cores, and letting
-PyTorch use all of them for small per-op work is much slower, not faster.
-`compile_model: true` in the config wraps the model in `torch.compile`;
-`precision="bf16-mixed"` is set in the `Trainer` for GPU runs.
-
-## Config files
-
-Each run script reads one YAML file, given with `--config <path.yaml>`.
-`configs/` has one per script, matching the script's name
-(`configs/run_regression.yaml` for `run_regression.py`, and so on) --
-start from those. A config file has three kinds of section:
-
-- `train:` / `predict:` -- everything specific to that stage: data paths,
-  hyperparameters, `accelerator`, and (for `predict:`) the checkpoint/stats
-  paths and output file.
-- `features:` -- the field names to read from the parquet file (global/jet/
-  lepton/target, or jet_vector/jet_scalar/... for `run_regression_ParT.py`).
-  Shared by both stages, so it only needs to be written once.
-- anything else at the top level (`slot_target_features:` for the two slot
-  scripts, `aim_repo:`/`experiment_name:` for `run_slot_model_aim.py`) is
-  also shared by both stages.
-
-`train()` saves the `features:` section (and `slot_target_features:`,
-where it applies) into `stats.pt` alongside the checkpoint, so `predict()`
-always rebuilds the model with the exact field list it was trained with,
-even if you've since edited the config file.
-
-Point `--config` at a copy of the file to try different hyperparameters
-without touching the original.
-
-## Setup
-
-Requires Python 3.12 and [uv](https://docs.astral.sh/uv/).
+From the repo root, after cloning:
 
 ```bash
-uv sync
+./prep_bsc.sh
 ```
 
-This creates `.venv` and installs everything needed to run the scripts
-below (torch, pytorch-lightning, awkward, pyarrow, uproot, vector, aim,
-...). If you also want to work in the notebooks or plot things
-(`ipykernel`, `jupyter-client`, `matplotlib`) or run the test suite
-(`pytest`), use:
+This installs [uv](https://docs.astral.sh/uv/) if you don't have it,
+downloads a small test data file to `datasets/`, installs the Python
+environment, and then does a test run to prove the whole chain actually
+works. You only need to run this once.
 
-```bash
-uv sync --extra dev
-```
+If it fails partway through, read the error message it prints -- it's
+written to tell you what went wrong and what to do about it -- then just
+re-run `./prep_bsc.sh`; each step skips itself if it's already done.
 
-`uv sync` without `--extra dev` will *remove* those packages if they're
-already installed, since it makes the environment match `pyproject.toml`
-exactly -- run `uv sync --extra dev` again afterwards if that happens.
+Everything below assumes you're running commands from the repo root (the
+directory `pyproject.toml` and `configs/` are in) -- the paths in the
+config file are plain relative paths, so they only resolve correctly from
+there.
 
-## Running things with `uv run`
+**Training data:** `prep_bsc.sh` only downloads a small test-split file, to
+check your environment works -- it's not enough to train on by itself.
+Ask your instructor where to get the full train/val parquet files that
+`configs/run_regression.yaml`'s `train_path`/`val_path` expect, and put
+them in the repo root (or edit those two lines to point at wherever you
+put them).
 
-Each run script is a module inside the `hepsetreg` package, so it's run
-with `-m`, not as a bare file path:
+## 2. Look at the config
+
+Open `configs/run_regression.yaml`. It has three sections:
+
+- `features:` -- which columns to read from the parquet file. You shouldn't
+  need to touch this.
+- `train:` -- data paths, model size, and training settings.
+- `predict:` -- where to find the checkpoint and what to run inference on,
+  filled in once you've trained something (step 4).
+
+If you want to experiment with hyperparameters (`learning_rate`,
+`max_epochs`, `d_model`, ...), edit the `train:` section directly, or make a
+copy of the file and point `--config` at your copy instead.
+
+## 3. Train
 
 ```bash
 uv run python -m hepsetreg.runs.run_regression --train --config configs/run_regression.yaml
+```
+
+This will print a line like:
+
+```
+done training. checkpoint + stats saved under tb_logs/event_regression/version_0
+```
+
+Watch it train (in a separate terminal, also from the repo root):
+
+```bash
+uv run tensorboard --logdir tb_logs
+```
+
+then open the URL it prints in a browser.
+
+## 4. Fill in the predict section
+
+Open `configs/run_regression.yaml` again and look inside the folder that got
+printed in step 3 (e.g. `tb_logs/event_regression/version_0/checkpoints/`).
+Lightning names the checkpoint file `epoch=X-step=Y.ckpt`. Update the
+`predict:` section's `checkpoint:` and `stats:` paths to match exactly what
+you see there -- `version_0` in the example above may be a different number
+for you.
+
+## 5. Predict
+
+```bash
 uv run python -m hepsetreg.runs.run_regression --predict --config configs/run_regression.yaml
 ```
 
-Same pattern for the others:
+This prints the mean absolute error on the test set, and writes predictions
+alongside the true values to the parquet file named in `output:`.
 
-```bash
-uv run python -m hepsetreg.runs.run_regression_ParT --train --config configs/run_regression_ParT.yaml
-uv run python -m hepsetreg.runs.run_slot_model --train --config configs/run_slot_model.yaml
-uv run python -m hepsetreg.runs.run_slot_model_aim --train --config configs/run_slot_model_aim.yaml
-uv run python -m hepsetreg.runs.run_regression_flow --train --config configs/run_regression_flow.yaml
-```
+## Running on the cluster instead of interactively
 
-Before `--predict` will work, open the config file and fill in the
-checkpoint and stats paths that training printed at the end (Lightning
-names checkpoints `epoch=X-step=Y.ckpt`).
-
-To build the parquet files from ROOT ntuples (edit the path/filenames at
-the bottom of the file first):
-
-```bash
-uv run python -m hepsetreg.physics.prep_data
-```
-
-To look at a finished or running training job:
-
-```bash
-uv run tensorboard --logdir tb_logs          # run_regression / run_regression_ParT / run_regression_flow / run_slot_model
-uv run aim up --repo aim_logs                # run_slot_model_aim
-```
-
-### Interactive GPU session
-
-<!-- fill in: how to request an interactive GPU node on this cluster -->
-
-## Running via Slurm
-
-`submit_run_regression` is a template Slurm submit script. It requests one
-GPU, activates nothing (it calls `.venv/bin/python` directly), and runs:
-
-```bash
-.venv/bin/python -m hepsetreg.runs.run_regression --train --config configs/run_regression.yaml
-```
-
-Submit it with:
+`submit_run_regression` is a ready-to-use Slurm submit script -- it runs
+exactly the training command from step 3. Submit it with:
 
 ```bash
 sbatch submit_run_regression
 ```
 
-For a different script, copy the file and change the partition/job name at
-the top and the module path + config on the last line, e.g.:
+Check the `#SBATCH` lines at the top (partition, memory, wall time) match
+what you've been told to use before submitting.
 
-```bash
-.venv/bin/python -m hepsetreg.runs.run_slot_model --train --config configs/run_slot_model.yaml
-```
+### Interactive GPU session
 
-Check `--mem` before submitting a training run on the full dataset -- the
-train parquet is loaded into memory in one go when the dataset is built.
+<!-- fill in: how to request an interactive GPU node on this cluster -->
+
+## If something goes wrong
+
+- **`./prep_bsc.sh` fails** -- it prints what step failed and why; the most
+  common causes are no network connection, or running it from the wrong
+  directory.
+- **"usage: ... --config <path.yaml>"** -- you forgot `--config
+  configs/run_regression.yaml` on the command line, or mistyped `--train`/
+  `--predict`.
+- **A file-not-found error on a `.parquet` file** -- you're not running from
+  the repo root, or the data files aren't where `configs/run_regression.yaml`
+  expects them (see the training-data note in step 1).
+- **Predict fails with a missing checkpoint/stats file** -- you haven't done
+  step 4 yet, or the `version_N` number is wrong.
+
+## Looking at the code
+
+`src/hepsetreg/runs/run_regression.py` is the script itself: a
+`build_model`, a `train`, and a `predict` function, nothing else. It's built
+from a few pieces elsewhere in `src/hepsetreg/`:
+
+- `datasets/EventDatasetBase.py` -- reads the parquet file and pads it into
+  fixed-size batches.
+- `backbones/backbone.py` + `backbones/head.py` -- the transformer encoder
+  and the regression head on top of it.
+- `training/lightning_module.py` -- wires the model and loss into a
+  PyTorch Lightning training loop.

@@ -113,4 +113,4 @@ PY
 
 echo
 echo "All done. The environment is set up and the test data loads correctly."
-echo "See docs/bsc_instructions.md for how to train and predict."
+echo "See README.md for how to train and predict."
