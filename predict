@@ -4,6 +4,24 @@
 CONFIG_FILE="${1:-run_regression.yaml}"
 shift || true
 
+# checkpoint=/stats= overrides only need the version_N/... part -- rewrite
+# them here to add the tb_logs/event_regression/ prefix every run actually
+# lives under. A checkpoint:/stats: written directly in the YAML file is
+# untouched (it's whatever path was put there).
+ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        checkpoint=*|stats=*)
+            key="${arg%%=*}"
+            value="${arg#*=}"
+            ARGS+=("${key}=tb_logs/event_regression/${value}")
+            ;;
+        *)
+            ARGS+=("$arg")
+            ;;
+    esac
+done
+
 # Run the command (any remaining args, e.g. learning_rate=0.0005, are
 # forwarded as config overrides)
-uv run python -m hepsetreg.runs.run_regression --predict --config "configs/${CONFIG_FILE}" "$@"
+uv run python -m hepsetreg.runs.run_regression --predict --config "configs/${CONFIG_FILE}" "${ARGS[@]}"

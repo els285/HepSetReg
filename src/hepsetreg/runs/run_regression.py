@@ -90,7 +90,9 @@ def train(config):
     early_stop = pl.callbacks.EarlyStopping(monitor="val_loss", mode="min", patience=config["early_stop_patience"])
     best_checkpoint = pl.callbacks.ModelCheckpoint(monitor="val_loss", mode="min", save_top_k=1)
 
-    logger = TensorBoardLogger(save_dir="tb_logs", name="event_regression")
+    # config["run_name"] names the run's folder (tb_logs/event_regression/<run_name>)
+    # instead of the default auto-incrementing version_0, version_1, ...
+    logger = TensorBoardLogger(save_dir="tb_logs", name="event_regression", version=config.get("run_name"))
     logging.getLogger("torch.fx.experimental.symbolic_shapes").setLevel(logging.ERROR)
     trainer = pl.Trainer(
         max_epochs=config["max_epochs"], accelerator=config["accelerator"],

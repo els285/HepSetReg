@@ -89,6 +89,13 @@ This only overrides that one setting for this one run -- the config file
 itself is unchanged. Works the same way with `./predict`. (See step 4 below
 if you'd rather change a setting permanently instead.)
 
+Each run gets its own folder under `tb_logs/event_regression/`, named
+`version_0`, `version_1`, ... by default. Give it a name you'll recognise
+instead with `run_name=`:
+```bash
+./train run_regression.yaml run_name=my_first_run
+```
+
 This will print a line like:
 
 ```
@@ -106,15 +113,17 @@ then open the URL it prints in a browser.
 
 Look inside the folder that just got printed (e.g.
 `tb_logs/event_regression/version_0/checkpoints/`) to find the checkpoint
-file -- Lightning names it `epoch=X-step=Y.ckpt`. Pass that path, and the
-`stats.pt` file sitting next to it, straight on the command line:
+file -- Lightning names it `epoch=X-step=Y.ckpt`. Pass `checkpoint=`/`stats=`
+relative to that `version_0`/`run_name` folder -- `./predict` already knows
+about the `tb_logs/event_regression/` part:
 
 ```bash
-./predict run_regression.yaml checkpoint=tb_logs/event_regression/version_0/checkpoints/epoch=X-step=Y.ckpt stats=tb_logs/event_regression/version_0/stats.pt
+./predict run_regression.yaml checkpoint=version_0/checkpoints/epoch=X-step=Y.ckpt stats=version_0/stats.pt
 ```
 
 (`version_0` and `epoch=X-step=Y` are whatever you actually saw printed and
-found in that folder -- they're different for every run.)
+found in that folder -- they're different for every run, or whatever you
+set `run_name=` to in step 2.)
 
 This prints the mean absolute error on the test set, and writes predictions
 alongside the true values to the parquet file named in `output:` -- add
@@ -140,7 +149,11 @@ setting permanently -- or just to see everything that's there -- open
 - `predict:` -- where to find the checkpoint and what to run inference on.
   You don't need to fill this in by hand (step 3's overrides cover it), but
   it's a useful record of your last run, or a place to put defaults so you
-  don't have to type the paths out every time.
+  don't have to type the paths out every time. Unlike the `checkpoint=`/
+  `stats=` overrides in step 3, `checkpoint:`/`stats:` written here need the
+  full path (`tb_logs/event_regression/version_0/...`) -- only `./predict`'s
+  command-line overrides get the `tb_logs/event_regression/` part added
+  automatically.
 
 If you want to experiment with hyperparameters (`learning_rate`,
 `max_epochs`, `d_model`, ...), edit the `train:` section directly, or make a
