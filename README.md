@@ -9,9 +9,16 @@ This branch has one script (`run_regression.py`) and one config file
 just follow the steps below. (The full project, with several other
 model/task combinations, is on the `config` branch.)
 
-## 1. Set up the environment
+## 🟦 1. Set up the environment
 
-From the repo root, after cloning:
+Clone the repo and switch into it:
+
+```bash
+git clone -b bsc https://github.com/els285/HepSetReg.git
+cd HepSetReg
+```
+
+Then, from the repo root:
 
 ```bash
 ./prep_bsc.sh
@@ -38,7 +45,7 @@ Ask your instructor where to get the full train/val parquet files that
 them in the repo root (or edit those two lines to point at wherever you
 put them).
 
-## 2. Look at the config
+## 🟩 2. Look at the config
 
 Open `configs/run_regression.yaml`. It has three sections:
 
@@ -52,7 +59,7 @@ If you want to experiment with hyperparameters (`learning_rate`,
 `max_epochs`, `d_model`, ...), edit the `train:` section directly, or make a
 copy of the file and point `--config` at your copy instead.
 
-## 3. Train
+## 🟨 3. Train
 
 ```bash
 uv run python -m hepsetreg.runs.run_regression --train --config configs/run_regression.yaml
@@ -72,7 +79,7 @@ uv run tensorboard --logdir tb_logs
 
 then open the URL it prints in a browser.
 
-## 4. Fill in the predict section
+## 🟧 4. Fill in the predict section
 
 Open `configs/run_regression.yaml` again and look inside the folder that got
 printed in step 3 (e.g. `tb_logs/event_regression/version_0/checkpoints/`).
@@ -81,7 +88,7 @@ Lightning names the checkpoint file `epoch=X-step=Y.ckpt`. Update the
 you see there -- `version_0` in the example above may be a different number
 for you.
 
-## 5. Predict
+## 🟥 5. Predict
 
 ```bash
 uv run python -m hepsetreg.runs.run_regression --predict --config configs/run_regression.yaml
