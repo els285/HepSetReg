@@ -2,6 +2,8 @@
 
 # Default config file name
 CONFIG_FILE="${1:-run_regression.yaml}"
+shift || true
 
-# Run the command
-uv run python -m hepsetreg.runs.run_regression --predict --config "configs/${CONFIG_FILE}"
+# Run the command (any remaining args, e.g. learning_rate=0.0005, are
+# forwarded as config overrides)
+uv run python -m hepsetreg.runs.run_regression --predict --config "configs/${CONFIG_FILE}" "$@"

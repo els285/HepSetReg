@@ -101,6 +101,16 @@ When on the GPU node, you train a model via:
 just looked at in step 2 -- if you made a copy with a different name to
 try different hyperparameters, use that name instead.)
 
+To try a different value without editing the file, add `key=value` after
+the config name:
+
+```bash
+./train run_regression.yaml learning_rate=0.0005 max_epochs=5
+```
+
+This only overrides those two settings for this one run -- the config file
+itself is unchanged. Works the same way with `./predict`.
+
 This will print a line like:
 
 ```
