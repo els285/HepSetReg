@@ -63,28 +63,7 @@ Ask your instructor where to get the full train/val parquet files that
 them in the repo root (or edit those two lines to point at wherever you
 put them).
 
-## 🟩 2. Look at the config
-
-> [!TIP]
-> To open, read and edit files, you can use the Remote-SSH package in VSCode.
-> Alternatively, you can use `nano` to read and edit
-> * `nano <file>` to open the file
-> * Edit the file by navigating around with arrow keys and using keyboard
-> * `Ctrl`+`O` to save the file: press `ENTER` to confirm
-
-Open `configs/run_regression.yaml`. It has three sections:
-
-- `features:` -- which columns to read from the parquet file. You shouldn't
-  need to touch this.
-- `train:` -- data paths, model size, and training settings.
-- `predict:` -- where to find the checkpoint and what to run inference on,
-  filled in once you've trained something (step 4).
-
-If you want to experiment with hyperparameters (`learning_rate`,
-`max_epochs`, `d_model`, ...), edit the `train:` section directly, or make a
-copy of the file and point `--config` at your copy instead.
-
-## 🟨 3. Run model training interactively
+## 🟩 2. Run model training interactively
 When we ssh in to CSF, we are in a login node that does not have direct access to a GPU. 
 From this node, we must tunnel into a worker node with a GPU. Run
 ```
@@ -93,23 +72,22 @@ From this node, we must tunnel into a worker node with a GPU. Run
 to access a GPU node. 
 This can sometimes take a long time depending on how busy the cluster is; for this reason we can also use a service that runs things automatically for us - see `Running on cluster` section below.
 
-When on the GPU node, you train a model via:
+When on the GPU node, you train a model by:
 ```bash
 ./train run_regression.yaml
 ```
-(`run_regression.yaml` here is the name of the file inside `configs/` you
-just looked at in step 2 -- if you made a copy with a different name to
-try different hyperparameters, use that name instead.)
+where `run_regression.yaml`  is the name of the configuration file inside `configs/`.
+This config contains all the information the code needs to set up the training, including the names of the input data files, the "hyperparameters" of the network itself etc.
 
-To try a different value without editing the file, add `key=value` after
-the config name:
-
+You can change these setings by adding `key=value` after
+the config name when running the `train` command:
 ```bash
-./train run_regression.yaml learning_rate=0.0005 max_epochs=5
+./train run_regression.yaml max_epochs=100
 ```
 
-This only overrides those two settings for this one run -- the config file
-itself is unchanged. Works the same way with `./predict`.
+This only overrides that one setting for this one run -- the config file
+itself is unchanged. Works the same way with `./predict`. (See step 4 below
+if you'd rather change a setting permanently instead.)
 
 This will print a line like:
 
@@ -122,31 +100,56 @@ Watch it train (in a separate terminal, also from the repo root):
 ```bash
 uv run tensorboard --logdir tb_logs
 ```
-
 then open the URL it prints in a browser.
 
-## 🟧 4. Fill in the predict section
+## 🟨 3. Predict
 
-Open `configs/run_regression.yaml` again and look inside the folder that got
-printed in step 3 (e.g. `tb_logs/event_regression/version_0/checkpoints/`).
-Lightning names the checkpoint file `epoch=X-step=Y.ckpt`. Update the
-`predict:` section's `checkpoint:` and `stats:` paths to match exactly what
-you see there -- `version_0` in the example above may be a different number
-for you.
-
-## 🟥 5. Predict
+Look inside the folder that just got printed (e.g.
+`tb_logs/event_regression/version_0/checkpoints/`) to find the checkpoint
+file -- Lightning names it `epoch=X-step=Y.ckpt`. Pass that path, and the
+`stats.pt` file sitting next to it, straight on the command line:
 
 ```bash
-./predict run_regression.yaml
+./predict run_regression.yaml checkpoint=tb_logs/event_regression/version_0/checkpoints/epoch=X-step=Y.ckpt stats=tb_logs/event_regression/version_0/stats.pt
 ```
 
+(`version_0` and `epoch=X-step=Y` are whatever you actually saw printed and
+found in that folder -- they're different for every run.)
+
 This prints the mean absolute error on the test set, and writes predictions
-alongside the true values to the parquet file named in `output:`.
+alongside the true values to the parquet file named in `output:` -- add
+`output=some_name.parquet` the same way if you want a different output
+filename.
+
+## 🟧 4. Editing the config file
+
+> [!TIP]
+> To open, read and edit files, you can use the Remote-SSH package in VSCode.
+> Alternatively, you can use `nano` to read and edit
+> * `nano <file>` to open the file
+> * Edit the file by navigating around with arrow keys and using keyboard
+> * `Ctrl`+`O` to save the file: press `ENTER` to confirm
+
+The `key=value` overrides above only apply to one run at a time. To change a
+setting permanently -- or just to see everything that's there -- open
+`configs/run_regression.yaml` itself. It has three sections:
+
+- `features:` -- which columns to read from the parquet file. You shouldn't
+  need to touch this.
+- `train:` -- data paths, model size, and training settings.
+- `predict:` -- where to find the checkpoint and what to run inference on.
+  You don't need to fill this in by hand (step 3's overrides cover it), but
+  it's a useful record of your last run, or a place to put defaults so you
+  don't have to type the paths out every time.
+
+If you want to experiment with hyperparameters (`learning_rate`,
+`max_epochs`, `d_model`, ...), edit the `train:` section directly, or make a
+copy of the file and point `--config` at your copy instead.
 
 ## Running on the cluster instead of interactively
 
 `submit_run_regression` is a ready-to-use Slurm submit script -- it runs
-exactly the training command from step 3. Submit it with:
+exactly the training command from step 2. Submit it with:
 
 ```bash
 sbatch submit_run_regression
@@ -166,8 +169,9 @@ what you've been told to use before submitting.
 - **A file-not-found error on a `.parquet` file** -- you're not running from
   the repo root, or the data files aren't where `configs/run_regression.yaml`
   expects them (see the training-data note in step 1).
-- **Predict fails with a missing checkpoint/stats file** -- you haven't done
-  step 4 yet, or the `version_N` number is wrong.
+- **Predict fails with a missing checkpoint/stats file** -- double check the
+  `checkpoint=`/`stats=` paths you passed match the `version_N` folder and
+  filename exactly.
 
 ## Looking at the code
 
