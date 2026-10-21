@@ -1,25 +1,45 @@
-# hepsetreg (bsc branch)
+# HepSetReg for BSc projects
 
-Predicts the ttbar invariant mass (`ttbar_mass`) from the reconstructed
-jets, leptons and MET of a ttbar dilepton event, using a transformer that
-reads the variable-length set of objects in each event.
+This branch is for BSc projects hosted at University of Manchester in Autumn 2026.
 
-This branch has one script (`run_regression.py`) and one config file
-(`configs/run_regression.yaml`), so there's nothing to choose between --
-just follow the steps below. (The full project, with several other
-model/task combinations, is on the `config` branch.)
+The code is Python-based and designed to run on the CSF cluster, specifically on a computer node that has access to a GPU.
+
+The following 
+
+
+# Instructions for logging in to CSF3
+
+> [!IMPORTANT]
+> You will need to follow this procedure every time you start a new session
+
+We will run inside the CSF terminal. A terminal is a way of ineracting with the computer's operating system through tetx-based commands.
+Open VSCode and click `Terminal` in the top dropdown menu, then click `New Terminal`.
+
+We will `ssh` into the CSF3 cluster. SSH is simply a way to access a remote computer or server given an internet connection. 
+In the terminal you should be able to type commands using the keyboard. Type the following command, replacing `username` with your University of Manchester username.
+```
+ssh username@csf3.itservices.manchester.ac.uk
+```
+Press ENTER.
+If this works, you should be prompted for your UoM password. Enter it and press ENTER.
+If your password is correct, you should then be prompted for two-factor authentication. For me this means I have to press 1 and then ENTER, and then use the DUO two-factor authentication app to confirm.
+If all this works, you should be in!
+
+If you wish to use this when not on campus wifi, you need a special access through something called a  VPN. See this website to set up: https://www.itservices.manchester.ac.uk/ourservices/vpn/
+
 
 ## 🟦 1. Set up the environment
 
-Clone the repo and switch into it:
+> [!NOTE]
+> You will only need to follow these instructions the first time you do this
 
+Clone the repository and switch into it:
 ```bash
 git clone -b bsc https://github.com/els285/HepSetReg.git
 cd HepSetReg
 ```
 
-Then, from the repo root:
-
+Run the preparation script:
 ```bash
 ./prep_bsc.sh
 ```
@@ -46,6 +66,13 @@ them in the repo root (or edit those two lines to point at wherever you
 put them).
 
 ## 🟩 2. Look at the config
+
+> [!TIP]
+> To open, read and edit files, you can use the Remote-SSH package in VSCode.
+> Alternatively, you can use `nano` to read and edit
+> * `nano <file>` to open the file
+> * Edit the file by navigating around with arrow keys and using keyboard
+> * `Ctrl`+`O` to save the file: press `ENTER` to confirm
 
 Open `configs/run_regression.yaml`. It has three sections:
 
