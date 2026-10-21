@@ -6,7 +6,7 @@
 #
 # Usage (from a fresh git clone):
 #   cd HepSetReg
-#   ./prep_bsc.sh
+#   ./setup_bsc
 
 set -euo pipefail
 
@@ -24,7 +24,7 @@ ok()      { echo "${GREEN}$*${RESET}"; }
 warn()    { echo "${YELLOW}$*${RESET}"; }
 err()     { echo "${RED}ERROR: $*${RESET}" >&2; }
 
-trap 'err "prep_bsc.sh failed at line $LINENO -- see the message above for which step this was."' ERR
+trap 'err "setup_bsc failed at line $LINENO -- see the message above for which step this was."' ERR
 
 DATA_URL="https://cernbox.cern.ch/s/EBakp1JpfphYRcM/download"
 DATA_DIR="datasets"

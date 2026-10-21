@@ -2,10 +2,8 @@
 
 This branch is for BSc projects hosted at University of Manchester in Autumn 2026.
 
-The code is Python-based and designed to run on the CSF cluster, specifically on a computer node that has access to a GPU.
-
-The following 
-
+> [!CAUTION]
+> Commands in this notebook are specific to the University of Manchester CSF3 cluster and will not run elsewhere.
 
 # Instructions for logging in to CSF3
 
@@ -41,7 +39,7 @@ cd HepSetReg
 
 Run the preparation script:
 ```bash
-./prep_bsc.sh
+./setup_bsc
 ```
 
 This installs [uv](https://docs.astral.sh/uv/) if you don't have it,
@@ -51,14 +49,14 @@ works. You only need to run this once.
 
 If it fails partway through, read the error message it prints -- it's
 written to tell you what went wrong and what to do about it -- then just
-re-run `./prep_bsc.sh`; each step skips itself if it's already done.
+re-run `./setup_bsc`; each step skips itself if it's already done.
 
 Everything below assumes you're running commands from the repo root (the
 directory `pyproject.toml` and `configs/` are in) -- the paths in the
 config file are plain relative paths, so they only resolve correctly from
 there.
 
-**Training data:** `prep_bsc.sh` only downloads a small test-split file, to
+**Training data:** `setup_bsc` only downloads a small test-split file, to
 check your environment works -- it's not enough to train on by itself.
 Ask your instructor where to get the full train/val parquet files that
 `configs/run_regression.yaml`'s `train_path`/`val_path` expect, and put
@@ -90,14 +88,14 @@ copy of the file and point `--config` at your copy instead.
 When we ssh in to CSF, we are in a login node that does not have direct access to a GPU. 
 From this node, we must tunnel into a worker node with a GPU. Run
 ```
-./get_interactive_gpu.sh
+./get_interactive_gpu
 ```
 to access a GPU node. 
 This can sometimes take a long time depending on how busy the cluster is; for this reason we can also use a service that runs things automatically for us - see `Running on cluster` section below.
 
 When on the GPU node, you train a model via:
 ```bash
-uv run python -m hepsetreg.runs.run_regression --train --config configs/run_regression.yaml
+./train
 ```
 
 This will print a line like:
@@ -126,7 +124,7 @@ for you.
 ## 🟥 5. Predict
 
 ```bash
-uv run python -m hepsetreg.runs.run_regression --predict --config configs/run_regression.yaml
+./predict
 ```
 
 This prints the mean absolute error on the test set, and writes predictions
@@ -144,13 +142,9 @@ sbatch submit_run_regression
 Check the `#SBATCH` lines at the top (partition, memory, wall time) match
 what you've been told to use before submitting.
 
-### Interactive GPU session
-
-<!-- fill in: how to request an interactive GPU node on this cluster -->
-
 ## If something goes wrong
 
-- **`./prep_bsc.sh` fails** -- it prints what step failed and why; the most
+- **`./setup_bsc` fails** -- it prints what step failed and why; the most
   common causes are no network connection, or running it from the wrong
   directory.
 - **"usage: ... --config <path.yaml>"** -- you forgot `--config

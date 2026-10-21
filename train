@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# Default config file name
+CONFIG_FILE="${1:-run_regression.yaml}"
+
+# Run the command
+uv run python -m hepsetreg.runs.run_regression --train --config "configs/${CONFIG_FILE}"
