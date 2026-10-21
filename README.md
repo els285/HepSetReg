@@ -95,8 +95,11 @@ This can sometimes take a long time depending on how busy the cluster is; for th
 
 When on the GPU node, you train a model via:
 ```bash
-./train
+./train run_regression.yaml
 ```
+(`run_regression.yaml` here is the name of the file inside `configs/` you
+just looked at in step 2 -- if you made a copy with a different name to
+try different hyperparameters, use that name instead.)
 
 This will print a line like:
 
@@ -124,7 +127,7 @@ for you.
 ## 🟥 5. Predict
 
 ```bash
-./predict
+./predict run_regression.yaml
 ```
 
 This prints the mean absolute error on the test set, and writes predictions
