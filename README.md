@@ -56,12 +56,12 @@ directory `pyproject.toml` and `configs/` are in) -- the paths in the
 config file are plain relative paths, so they only resolve correctly from
 there.
 
-**Training data:** `setup_bsc` only downloads a small test-split file, to
-check your environment works -- it's not enough to train on by itself.
-Ask your instructor where to get the full train/val parquet files that
-`configs/run_regression.yaml`'s `train_path`/`val_path` expect, and put
-them in the repo root (or edit those two lines to point at wherever you
-put them).
+**Training data:** `configs/run_regression.yaml`'s `train_path`/`val_path`/
+`data_path` all point at the small test file `setup_bsc` downloads for now,
+so you can run everything below right away -- it's too small to produce a
+good model, just enough to prove the whole chain works. Ask your instructor
+for the full train/val parquet files when you're ready to train for real,
+and edit those lines to point at wherever you put them.
 
 ## 🟩 2. Run model training interactively
 When we ssh in to CSF, we are in a login node that does not have direct access to a GPU. 
