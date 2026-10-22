@@ -5,7 +5,8 @@ Each run script still has exactly the same `train(config)` / `predict(config)`
 functions as before, each expecting a plain dict -- the only thing that
 changes is where that dict comes from. `load_config(stage)` reads the path
 given after `--config` on the command line and returns that section
-("train" or "predict") of the YAML file.
+("train" or "predict") of the YAML file, with any trailing `key=value`
+arguments applied as overrides on top.
 """
 
 import sys
@@ -39,4 +40,14 @@ def load_config(stage):
     for key, value in full_config.items():
         if key not in ("train", "predict"):
             config[key] = value
+
+    # any remaining bare `key=value` arguments override entries in the config,
+    # e.g. `./train run_regression.yaml learning_rate=0.0005 max_epochs=5`.
+    # yaml.safe_load coerces the value string to the right type (float, int,
+    # bool, ...) the same way the YAML file itself would.
+    for arg in sys.argv[1:]:
+        if "=" in arg and not arg.startswith("-"):
+            key, _, value = arg.partition("=")
+            config[key] = yaml.safe_load(value)
+
     return config
