@@ -43,25 +43,20 @@ Run the preparation script:
 ```
 
 This installs [uv](https://docs.astral.sh/uv/) if you don't have it,
-downloads a small test data file to `datasets/`, installs the Python
-environment, and then does a test run to prove the whole chain actually
-works. You only need to run this once.
+downloads the train/val/test data files to `datasets/` (train is ~1.3GB, so
+this can take a few minutes), installs the Python environment, and then
+does a test run to prove the whole chain actually works. You only need to
+run this once.
 
 If it fails partway through, read the error message it prints -- it's
 written to tell you what went wrong and what to do about it -- then just
-re-run `./setup_bsc`; each step skips itself if it's already done.
+re-run `./setup_bsc`; each step (including each file download) skips itself
+if it's already done.
 
 Everything below assumes you're running commands from the repo root (the
 directory `pyproject.toml` and `configs/` are in) -- the paths in the
 config file are plain relative paths, so they only resolve correctly from
 there.
-
-**Training data:** `configs/run_regression.yaml`'s `train_path`/`val_path`/
-`data_path` all point at the small test file `setup_bsc` downloads for now,
-so you can run everything below right away -- it's too small to produce a
-good model, just enough to prove the whole chain works. Ask your instructor
-for the full train/val parquet files when you're ready to train for real,
-and edit those lines to point at wherever you put them.
 
 ## 🟩 2. Run model training interactively
 When we ssh in to CSF, we are in a login node that does not have direct access to a GPU. 

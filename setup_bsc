@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Sets up everything needed to run the basic regression model:
-# installs uv, downloads a test data file, installs the Python environment,
-# then proves the whole chain actually works by loading the downloaded file
-# through the project's own code.
+# installs uv, downloads the train/val/test data files (train is ~1.3GB,
+# so this can take a while), installs the Python environment, then proves
+# the whole chain actually works by loading the (small) test file through
+# the project's own code.
 #
 # Usage (from a fresh git clone):
 #   cd HepSetReg
@@ -26,10 +27,49 @@ err()     { echo "${RED}ERROR: $*${RESET}" >&2; }
 
 trap 'err "setup_bsc failed at line $LINENO -- see the message above for which step this was."' ERR
 
-DATA_URL="https://cernbox.cern.ch/s/EBakp1JpfphYRcM/download"
+# Public CERNBox folder share holding train/val/test together -- the bare
+# share link downloads the whole folder as a tarball, so individual files
+# are fetched via its `?files=<name>` query param instead.
+FOLDER_SHARE="https://cernbox.cern.ch/s/Pd5y969ajhIi4b3/download?files="
 DATA_DIR="datasets"
-DATA_FILE="$DATA_DIR/tt2Ltest.parquet"
+TRAIN_FILE="$DATA_DIR/ttbar-2L_train_051026.parquet"
+VAL_FILE="$DATA_DIR/ttbar-2L_val_051026.parquet"
+TEST_FILE="$DATA_DIR/ttbar-2L_test_051026.parquet"
 MIN_DATA_BYTES=1000000  # a truncated/failed download would be far smaller than this
+
+# Downloads one file from FOLDER_SHARE, skipping if it's already there, and
+# checking the result is at least MIN_DATA_BYTES (not a truncated download
+# or an HTML error page saved as if it were data).
+download_file() {
+    local remote_name="$1" dest="$2"
+    local url="${FOLDER_SHARE}${remote_name}"
+
+    if [ -f "$dest" ] && [ "$(stat -c%s "$dest" 2>/dev/null || stat -f%z "$dest")" -ge "$MIN_DATA_BYTES" ]; then
+        ok "$dest already downloaded, skipping."
+        return
+    fi
+
+    echo "Downloading $remote_name to $dest ..."
+    # --fail: treat HTTP error responses (404, 403, ...) as failures instead of
+    # silently saving the error page as if it were the data file.
+    # --retry: tolerate a flaky connection.
+    if ! curl --fail --retry 3 -L -o "$dest" "$url"; then
+        err "download failed. Check your network connection and that"
+        echo "${RED}$url is still a valid link.${RESET}" >&2
+        rm -f "$dest"
+        exit 1
+    fi
+
+    local actual_bytes
+    actual_bytes=$(stat -c%s "$dest" 2>/dev/null || stat -f%z "$dest")
+    if [ "$actual_bytes" -lt "$MIN_DATA_BYTES" ]; then
+        err "$dest is only $actual_bytes bytes -- looks like a failed"
+        echo "${RED}or truncated download, not real data (re-run this script to retry).${RESET}" >&2
+        rm -f "$dest"
+        exit 1
+    fi
+    ok "$dest OK ($actual_bytes bytes)"
+}
 
 # ---- sanity check: are we in the right place? ----
 # (the most likely real mistake: running this before `cd`-ing into the clone)
@@ -62,33 +102,13 @@ if ! command -v uv &> /dev/null; then
 fi
 ok "uv OK: $(uv --version)"
 
-# ---- step 2: download the test data (skip if already present) ----
-step "Step 2: test data"
+# ---- step 2: download train/val/test data (skip whichever's already present) ----
+step "Step 2: train/val/test data"
 mkdir -p "$DATA_DIR"
 
-if [ -f "$DATA_FILE" ] && [ "$(stat -c%s "$DATA_FILE" 2>/dev/null || stat -f%z "$DATA_FILE")" -ge "$MIN_DATA_BYTES" ]; then
-    ok "$DATA_FILE already downloaded, skipping."
-else
-    echo "Downloading test data to $DATA_FILE ..."
-    # --fail: treat HTTP error responses (404, 403, ...) as failures instead of
-    # silently saving the error page as if it were the data file.
-    # --retry: tolerate a flaky connection.
-    if ! curl --fail --retry 3 -L -o "$DATA_FILE" "$DATA_URL"; then
-        err "download failed. Check your network connection and that"
-        echo "${RED}$DATA_URL is still a valid link.${RESET}" >&2
-        rm -f "$DATA_FILE"
-        exit 1
-    fi
-fi
-
-actual_bytes=$(stat -c%s "$DATA_FILE" 2>/dev/null || stat -f%z "$DATA_FILE")
-if [ "$actual_bytes" -lt "$MIN_DATA_BYTES" ]; then
-    err "$DATA_FILE is only $actual_bytes bytes -- looks like a failed"
-    echo "${RED}or truncated download, not real data (re-run this script to retry).${RESET}" >&2
-    rm -f "$DATA_FILE"
-    exit 1
-fi
-ok "Data file OK: $DATA_FILE ($actual_bytes bytes)"
+download_file "ttbar-2L_train_051026.parquet" "$TRAIN_FILE"
+download_file "ttbar-2L_val_051026.parquet" "$VAL_FILE"
+download_file "ttbar-2L_test_051026.parquet" "$TEST_FILE"
 
 # ---- step 3: install the Python environment ----
 # --extra dev: also installs ipykernel/jupyter/matplotlib/pytest, since
@@ -109,7 +129,7 @@ ok "Environment synced."
 # not just "is the environment installed" but "can the package actually read
 # real data", which is the thing that's actually going to be run.
 step "Step 4: test run"
-uv run python - "$DATA_FILE" <<'PY'
+uv run python - "$TEST_FILE" <<'PY'
 import sys
 import yaml
 
