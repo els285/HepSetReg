@@ -111,12 +111,9 @@ download_file "ttbar-2L_val_051026.parquet" "$VAL_FILE"
 download_file "ttbar-2L_test_051026.parquet" "$TEST_FILE"
 
 # ---- step 3: install the Python environment ----
-# --extra dev: also installs ipykernel/jupyter/matplotlib/pytest, since
-# students will want notebooks and plotting, not just the bare training
-# scripts. Plain `uv sync` *removes* those packages if anything had already
-# installed them, rather than just skipping them -- always use --extra dev here.
+# Run `uv sync --extra dev` yourself if you want pytest/notebooks too.
 step "Step 3: uv sync"
-if ! uv sync --extra dev; then
+if ! uv sync; then
     err "'uv sync' failed -- see the error above. A slow/interrupted"
     echo "${RED}network is the most common cause; just re-run this script.${RESET}" >&2
     exit 1
