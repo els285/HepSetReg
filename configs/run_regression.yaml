@@ -8,11 +8,9 @@ features:
   target: [ttbar_mass]
 
 train:
-  # data -- for now these all point at the small test file setup_bsc
-  # downloads, so training runs out of the box. Swap in the real train/val
-  # files once your instructor gives you them (see README step 1).
-  train_path: datasets/tt2Ltest.parquet
-  val_path: datasets/tt2Ltest.parquet
+  # data -- setup_bsc downloads these, so training runs out of the box.
+  train_path: datasets/ttbar-2L_train_051026.parquet
+  val_path: datasets/ttbar-2L_val_051026.parquet
   batch_size: 4096
   # model architecture
   d_model: 128

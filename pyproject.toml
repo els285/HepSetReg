@@ -1,6 +1,4 @@
 [build-system]
-# requires = ["setuptools>=68", "wheel"]
-# build-backend = "setuptools.build_meta"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
@@ -28,10 +26,11 @@ dependencies = [
     "setuptools>=84.0.0",
     "uproot>=5.7.6",
     "vector>=1.8.1",
+    "matplotlib>=3.8",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4", "matplotlib>=3.8", "ipykernel>=6.29", "jupyter-client>=8.0"]
+dev = ["pytest>=7.4", "ipykernel>=6.29", "jupyter-client>=8.0"]
 
 [project.scripts]
 hepsetreg-train = "hepsetreg.cli:main"
