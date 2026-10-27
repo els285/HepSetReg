@@ -36,6 +36,7 @@ from hepsetreg.backbones.backbone import TransformerBackbone
 from hepsetreg.backbones.flow_matching import FlowRegressor, TransformerVelocityField
 from hepsetreg.config import load_config
 from hepsetreg.datasets.EventDatasetBase import EventDataModule, EventDataset, _identity_collate
+from hepsetreg.losses.shape_losses import SHAPE_LOSSES
 from hepsetreg.training.lightning_module import FlowMatchingModule
 
 # backbone and velocity field share one set of size knobs -- simplest config,
@@ -95,7 +96,16 @@ def train(config):
     scheduler_fn = lambda optimizer: torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, factor=0.5, patience=config["lr_patience"],
     )
-    module = FlowMatchingModule(model, learning_rate=config["learning_rate"], scheduler_fn=scheduler_fn)
+    # shape_metric: null (default, plain flow matching) or one of
+    # SHAPE_LOSSES's keys (emd, mmd, kl, mmd_joint, sliced_emd) to add a
+    # shape-matching term on top of the velocity loss -- see
+    # FlowMatchingModule's docstring for the extra sampling cost this adds
+    # to every training step, controlled by shape_n_steps/shape_n_samples.
+    module = FlowMatchingModule(
+        model, learning_rate=config["learning_rate"], scheduler_fn=scheduler_fn,
+        shape_metric=config.get("shape_metric"), shape_weight=config.get("shape_weight", 0.1),
+        shape_n_steps=config.get("shape_n_steps", 10), shape_n_samples=config.get("shape_n_samples", 2),
+    )
 
     # stop once val_loss hasn't improved for early_stop_patience epochs, and
     # keep the best-val_loss checkpoint rather than the last one
@@ -172,6 +182,13 @@ def predict(config):
     mae = (point_pred - targets).abs().mean(dim=0)  # mean over events, per target feature
     for name, value in zip(target_features, mae):
         print(f"{name:12s} MAE: {value:.4f}")
+
+    if config.get("shape_metric") is not None:
+        point_pred_scaled = preds_scaled.mean(dim=1) if keep_all_samples else preds_scaled
+        shape_loss_fn = SHAPE_LOSSES[config["shape_metric"]]
+        for i, name in enumerate(target_features):
+            shape = shape_loss_fn(point_pred_scaled[:, i:i + 1], targets_scaled[:, i:i + 1])
+            print(f"{name:12s} {config['shape_metric']} shape distance (z-scored): {shape:.4f}")
 
     # save predictions + targets to parquet, as two record groups -- e.g.
     # arr.targets.ttbar_mass, arr.predictions.ttbar_mass (or, with
