@@ -83,7 +83,7 @@ class FlowMatchingModule(pl.LightningModule):
     def __init__(
         self, model, learning_rate=1e-3, weight_decay=0.0,
         val_n_steps=20, val_n_samples=4,
-        predict_n_steps=50, predict_n_samples=8, scheduler_fn=None,
+        predict_n_steps=50, predict_n_samples=8, keep_all_samples=False, scheduler_fn=None,
     ):
         super().__init__()
         self.model = model
@@ -93,6 +93,7 @@ class FlowMatchingModule(pl.LightningModule):
         self.val_n_samples = val_n_samples
         self.predict_n_steps = predict_n_steps
         self.predict_n_samples = predict_n_samples
+        self.keep_all_samples = keep_all_samples
         self.scheduler_fn = scheduler_fn  # optimizer -> LR scheduler, or None for a constant LR
         self.save_hyperparameters(ignore=["model", "scheduler_fn"])
 
@@ -136,11 +137,14 @@ class FlowMatchingModule(pl.LightningModule):
     def predict_step(self, batch, batch_idx):
         """See EventRegressionModule.predict_step -- same contract (a CPU
         {"pred", "target"} dict per batch, still z-scored), except "pred" is
-        the sample-mean point estimate from `predict_n_steps`/
-        `predict_n_samples` ODE integration, since this model doesn't have
-        a single deterministic forward pass."""
+        from `predict_n_steps`/`predict_n_samples` ODE integration, since
+        this model doesn't have a single deterministic forward pass: the
+        sample-mean point estimate by default, or -- if `keep_all_samples`
+        -- every individual draw, shape (B, n_samples, F) instead of
+        (B, F), for looking at the predicted distribution itself rather
+        than just its mean (e.g. calibration, per-event spread)."""
         samples = self.model(batch, n_steps=self.predict_n_steps, n_samples=self.predict_n_samples)  # (B, n_samples, F)
-        pred = samples.mean(dim=1)
+        pred = samples if self.keep_all_samples else samples.mean(dim=1)
         return {"pred": pred.cpu(), "target": batch["target"].cpu()}
 
     def configure_optimizers(self):

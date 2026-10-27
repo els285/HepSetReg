@@ -38,3 +38,8 @@ predict:
   # (predict_n_steps/predict_n_samples in FlowMatchingModule)
   n_steps: 20
   n_samples: 8
+  # false (default): save the n_samples-average point estimate, one row per
+  # event. true: save all n_samples individual draws per event instead (a
+  # list column per target feature) -- e.g. for calibration/looking at the
+  # predicted distribution, not just its mean.
+  keep_all_samples: false

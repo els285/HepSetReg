@@ -129,8 +129,17 @@ def predict(config):
     saved = torch.load(config["stats"], map_location="cpu")
     stats, max_jets, model_config = saved["stats"], saved["max_jets"], saved["model_config"]
 
+    # keep_all_samples: false (default) saves the sample-mean point estimate,
+    # one row per event, same as a direct-regression predict() output. true
+    # saves every individual ODE-sampled draw instead (shape (n_samples,)
+    # per event, per target feature) -- e.g. for calibration or looking at
+    # the predicted distribution's spread, not just its mean.
+    keep_all_samples = config.get("keep_all_samples", False)
     model = build_model(model_config)
-    module = FlowMatchingModule(model, predict_n_steps=config["n_steps"], predict_n_samples=config["n_samples"])
+    module = FlowMatchingModule(
+        model, predict_n_steps=config["n_steps"], predict_n_samples=config["n_samples"],
+        keep_all_samples=keep_all_samples,
+    )
     # if the checkpoint was saved from a torch.compile(...)-wrapped
     # submodule (train.py's compile_model=True compiles model.backbone and
     # model.velocity_field individually), those parameter keys are prefixed
@@ -156,16 +165,25 @@ def predict(config):
     preds = preds_scaled * (t_std + 1e-8) + t_mean
     targets = targets_scaled * (t_std + 1e-8) + t_mean
 
-    mae = (preds - targets).abs().mean(dim=0)  # mean over events, per target feature
+    # preds is (N, F) normally, or (N, n_samples, F) if keep_all_samples --
+    # MAE is always reported against the sample mean, so this printout means
+    # the same thing (and is comparable across runs) either way.
+    point_pred = preds.mean(dim=1) if keep_all_samples else preds
+    mae = (point_pred - targets).abs().mean(dim=0)  # mean over events, per target feature
     for name, value in zip(target_features, mae):
         print(f"{name:12s} MAE: {value:.4f}")
 
     # save predictions + targets to parquet, as two record groups -- e.g.
-    # arr.targets.ttbar_mass, arr.predictions.ttbar_mass
-    # .contiguous(): a column slice of a 2D tensor is a strided,
+    # arr.targets.ttbar_mass, arr.predictions.ttbar_mass (or, with
+    # keep_all_samples, arr.predictions.ttbar_mass is a list of n_samples
+    # draws per event instead of a single value).
+    # .contiguous(): a column slice of a 2D/3D tensor is a strided,
     # non-contiguous view, which pyarrow rejects with "ndarray is not contiguous"
     target_fields = {name: ak.Array(targets[:, i].contiguous().numpy()) for i, name in enumerate(target_features)}
-    pred_fields = {name: ak.Array(preds[:, i].contiguous().numpy()) for i, name in enumerate(target_features)}
+    if keep_all_samples:
+        pred_fields = {name: ak.Array(preds[:, :, i].contiguous().numpy()) for i, name in enumerate(target_features)}
+    else:
+        pred_fields = {name: ak.Array(preds[:, i].contiguous().numpy()) for i, name in enumerate(target_features)}
     out = ak.zip({"targets": ak.zip(target_fields), "predictions": ak.zip(pred_fields)}, depth_limit=1)
     ak.to_parquet(out, config["output"])
     print(f"saved predictions to {config['output']}")
