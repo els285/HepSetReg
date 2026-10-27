@@ -32,7 +32,7 @@ predict:
   # (Lightning names it epoch=X-step=Y.ckpt by default)
   checkpoint: tb_logs/event_regression/version_39/checkpoints/epoch=49-step=57300.ckpt
   stats: tb_logs/event_regression/version_39/stats.pt
-  data_path: datasets/ttbar-2L_val_051026.parquet
+  data_path: datasets/ttbar-2L_test_051026.parquet
   batch_size: 4096
   accelerator: gpu
   output: ttbar-2L-inference_191026.parquet
