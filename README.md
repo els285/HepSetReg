@@ -1,11 +1,17 @@
 # hepsetreg
 
-Regresses observables from ttbar dilepton events (reco jets, leptons, MET)
-using a transformer encoder over the variable-length set of objects in each
-event. Targets range from system-level kinematics (ttbar mass, spin
-correlation observables) to per-particle four-momenta (top/antitop), and
-training can use a plain regression head, a cross-attention decoder for
-per-object prediction, or a conditional flow-matching head.
+A small PyTorch Lightning package for **regressing observables (e.g. the
+ttbar invariant mass) from a variable-length set of reconstructed physics
+objects** (jets, leptons, MET, ...) using a transformer encoder.
+
+
+
+| | DIRECTOR | hepsetreg |
+|---|---|---|
+| Jets per event | Fixed `feature_groups` column slices in a flat `X` vector; changing the jet count means re-deriving column indices and retraining the projection layers. | Any number of jets (or other repeated objects) per event, handled by padding + an attention mask. One linear projection is shared across every instance of an object type. |
+| Loss functions | Huber + KL + a ttbar-specific hard-coded mass formula, all wired together in one training script. | Modular named terms (`regression`, `distribution_kl`, `flow_matching`, `consistency`) combined by `CompositeLoss`, each with its own weight and optional ramp -- include any subset. |
+| Physics-consistency loss | A specific formula reconstructing top/antitop/ttbar mass from 8 fixed output columns. | A user-supplied callable (`PhysicsConsistencyLoss(fn)`); works for any process/target layout. |
+| Training loop | Hand-written `for epoch in range(...)` loop, duplicated between `transformer_train.py` and `flowmatch_train.py`. | `pytorch_lightning.LightningModule` + `Trainer`, standard checkpointing/early-stopping/logging. |
 
 ## What's here
 
