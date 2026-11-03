@@ -1,6 +1,11 @@
-# HepSetReg for BSc projects
+# HepSetReg minimal base
 
-This branch is for BSc projects hosted at University of Manchester in Autumn 2026.
+This branch is a stripped-down base for extending HepSetReg with a new
+approach (e.g. a tokenized backbone) without wading through the other
+backbones and training modes (flow matching, ParT, slot attention) that
+live on other branches. It has exactly one path through the code --
+`run_regression.py`, as described below -- plus the optional shape-matching
+loss term it already supports.
 
 > [!CAUTION]
 > Commands in this notebook are specific to the University of Manchester CSF3 cluster and will not run elsewhere.
