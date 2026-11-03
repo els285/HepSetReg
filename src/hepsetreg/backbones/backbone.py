@@ -90,7 +90,10 @@ class TransformerBackbone(nn.Module):
             batch_first=True,
             norm_first=True,
         )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        # norm_first=True above already rules out PyTorch's nested-tensor
+        # fast path, so enable_nested_tensor=True (the default) would only
+        # ever warn that it's falling back -- disable it outright instead.
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers, enable_nested_tensor=False)
         self.output_norm = nn.LayerNorm(d_model)
         self.pool = AttentionPooling(d_model)
         self.d_model = d_model
