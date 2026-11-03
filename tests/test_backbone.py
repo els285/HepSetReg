@@ -3,6 +3,14 @@ Example test for TransformerBackbone/EventRegressor -- use this as a
 template when you add a new backbone (e.g. a tokenized one): copy this
 file, swap in your own model construction, and keep both checks below.
 
+Deliberately loads one real batch through the actual dataset class
+(EventDatasetBase.EventDataset) and the real config
+(configs/run_regression.yaml), rather than inventing synthetic feature
+counts/shapes by hand -- that way the test exercises exactly the dict
+shape/dtypes your model will actually be called with, not a guess at it.
+It's skipped automatically if the data hasn't been downloaded yet
+(./setup_bsc does this), rather than failing.
+
 Why these two checks specifically:
   - test_output_shape: catches the most common bug when wiring up a new
     backbone -- a wrong d_model/output_dim/feature count mismatch would
@@ -15,21 +23,48 @@ Why these two checks specifically:
     exactly the property a tokenized backbone needs to preserve too.
 """
 
+import os
+
+import pytest
 import torch
+import yaml
+from torch.utils.data import DataLoader
 
-from hepsetreg.backbones.backbone import TransformerBackbone
 from hepsetreg.backbones.head import EventRegressor, RegressionHead
+from hepsetreg.backbones.backbone import TransformerBackbone
+from hepsetreg.datasets.EventDatasetBase import EventDataset, _identity_collate
 
-N_GLOBAL, N_JET, N_LEPTON, N_TARGET = 6, 9, 10, 1
+CONFIG_PATH = "configs/run_regression.yaml"
+BATCH_SIZE = 8
 
 
-def _build_model():
+@pytest.fixture(scope="module")
+def real_batch():
+    """Loads the val parquet and returns (batch, features) ONCE, shared by
+    both tests below -- EventDataset re-reads and re-z-scores the whole
+    file on every construction, which is slow on this filesystem, so
+    there's no reason to pay that cost twice for two tests on the same
+    8 events."""
+    with open(CONFIG_PATH) as f:
+        config = yaml.safe_load(f)
+    features = config["features"]
+    val_path = config["train"]["val_path"]
+    if not os.path.exists(val_path):
+        pytest.skip(f"{val_path} not downloaded -- run ./setup_bsc first.")
+
+    dataset = EventDataset(val_path, features=features)
+    loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=_identity_collate)
+    batch = next(iter(loader))
+    return batch, features
+
+
+def _build_model(features):
     torch.manual_seed(0)
     backbone = TransformerBackbone(
-        n_global_features=N_GLOBAL, n_jet_features=N_JET, n_lepton_features=N_LEPTON,
-        d_model=32, nhead=4, num_layers=2,
+        n_global_features=len(features["global"]), n_jet_features=len(features["jet"]),
+        n_lepton_features=len(features["lepton"]), d_model=32, nhead=4, num_layers=2,
     )
-    head = RegressionHead(d_model=32, output_dim=N_TARGET, n_layers=2, start_neurons=32)
+    head = RegressionHead(d_model=32, output_dim=len(features["target"]), n_layers=2, start_neurons=32)
     model = EventRegressor(backbone, head)
     model.eval()  # turn off dropout -- without this, two forward passes on
     # the exact same input wouldn't even agree with each other, let alone
@@ -37,33 +72,17 @@ def _build_model():
     return model
 
 
-def _random_batch(batch_size=4, n_jets=5, n_leptons=2, seed=0):
-    g = torch.Generator().manual_seed(seed)
-    # A real event has a variable number of jets -- pad up to n_jets and
-    # mark the last two slots as padding (jet_mask=False) to exercise that
-    # path, instead of only testing the all-real-jets case.
-    jet_mask = torch.ones(batch_size, n_jets, dtype=torch.bool)
-    jet_mask[:, -2:] = False
-    return {
-        "global": torch.randn(batch_size, N_GLOBAL, generator=g),
-        "jet": torch.randn(batch_size, n_jets, N_JET, generator=g),
-        "jet_mask": jet_mask,
-        "lepton": torch.randn(batch_size, n_leptons, N_LEPTON, generator=g),
-        "lepton_mask": torch.ones(batch_size, n_leptons, dtype=torch.bool),
-    }
-
-
-def test_output_shape():
-    model = _build_model()
-    batch = _random_batch()
+def test_output_shape(real_batch):
+    batch, features = real_batch
+    model = _build_model(features)
     with torch.no_grad():
         pred = model(batch)
-    assert pred.shape == (batch["global"].shape[0], N_TARGET)
+    assert pred.shape == (batch["global"].shape[0], len(features["target"]))
 
 
-def test_permutation_invariance():
-    model = _build_model()
-    batch = _random_batch()
+def test_permutation_invariance(real_batch):
+    batch, features = real_batch
+    model = _build_model(features)
 
     # Same permutation applied to the jet features AND the jet mask -- this
     # is the same reordering a different (but physically identical) jet
