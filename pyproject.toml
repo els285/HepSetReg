@@ -7,7 +7,7 @@ name = "hepsetreg"
 version = "0.1.0"
 description = "PyTorch Lightning transformer-encoder package for regressing observables from variable-length sets of reconstructed physics objects (e.g. ATLAS jets/leptons/MET)."
 readme = "README.md"
-requires-python = "~=3.12.0"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Ethan Simpson" }]
 dependencies = [
