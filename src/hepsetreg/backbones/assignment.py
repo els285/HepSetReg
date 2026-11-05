@@ -122,7 +122,9 @@ class AssignmentHead(nn.Module):
         is_lepton = torch.arange(mask.shape[1], device=mask.device) >= jet_mask.shape[1]
         allowed = (self.lepton_role[:, None] == is_lepton) & mask[:, None]
         logits = self.score(tokens[:, -mask.shape[1]:]).transpose(1, 2)
-        return logits.masked_fill(~allowed, -torch.inf).log_softmax(-1).masked_fill(~allowed, -torch.inf)
+        # Finite masked logits avoid NaN derivatives for roles with no candidates.
+        safe_logits = logits.masked_fill(~allowed, torch.finfo(logits.dtype).min)
+        return safe_logits.log_softmax(-1).masked_fill(~allowed, -torch.inf)
 
     def _slots(self, index, batch):
         return torch.where(index >= 0, index + self.lepton_role * batch["jet_mask"].shape[1], -1)

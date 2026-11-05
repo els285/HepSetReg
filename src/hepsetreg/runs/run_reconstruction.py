@@ -16,6 +16,7 @@ if __name__ == "__main__":
     check_args("usage: python -m hepsetreg.runs.run_reconstruction --train | --predict --config <path.yaml>")
 
 import awkward as ak
+import pyarrow.parquet as pq
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -92,7 +93,10 @@ def predict(config):
     for name, roles in module.assignment.targets.targets.items():
         fields[name] = ak.Array(index[:, roles])
         fields[f"{name}_prob"] = ak.Array(prob[:, roles])
-    ak.to_parquet(ak.zip({"predictions": ak.zip(fields, depth_limit=1)}, depth_limit=1), config["output"])
+    result = {"predictions": ak.zip(fields, depth_limit=1)}
+    if "event_id" in pq.read_schema(config["data_path"]).names:
+        result["event_id"] = ak.from_parquet(config["data_path"], columns=["event_id"])["event_id"]
+    ak.to_parquet(ak.zip(result, depth_limit=1), config["output"])
     print(f"saved predictions to {config['output']}")
 
 

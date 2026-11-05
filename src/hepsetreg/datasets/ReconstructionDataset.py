@@ -31,10 +31,15 @@ class ReconstructionDataset(EventDataset):
         self.truth = {}
         if assignment is None:
             return
-        targets = ak.from_parquet(path, columns=[f"targets.{f}" for fs in LABEL_FIELDS.values() for f in fs])
-        _require_fields(targets["targets"], sum(LABEL_FIELDS.values(), []), f"{path} targets")
+        required_sources = {source for source, _, _ in assignment.roles}
+        required_fields = [field for source, names in LABEL_FIELDS.items()
+                           if source in required_sources for field in names]
+        targets = ak.from_parquet(path, columns=[f"targets.{f}" for f in required_fields])
+        _require_fields(targets["targets"], required_fields, f"{path} targets")
         labels = {}
         for source, objects, mask in (("jet", arrays[1], self.jet_mask), ("lepton", arrays[2], self.lepton_mask)):
+            if source not in required_sources:
+                continue
             values = ak.concatenate([targets["targets"][f] for f in LABEL_FIELDS[source]], axis=1)
             if not ak.all(ak.num(values, axis=1) == ak.num(objects, axis=1)):
                 raise ValueError(f"{path}: {LABEL_FIELDS[source]} are not aligned with the measured {source}s")
