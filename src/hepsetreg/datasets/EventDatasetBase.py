@@ -44,14 +44,15 @@ def load_arrays(parquet_path, features):
     """
     events = ak.from_parquet(parquet_path)
     inputs = events["inputs"]
-    targets = events["targets"]
+    targets = events["targets"] if features["target"] else None  # measured-only files have none
 
     lepton_names = [f for f in features["lepton"] if f != "is_electron"]
     _require_fields(inputs, features["global"] + features["jet"], f"{parquet_path} inputs")
     _require_fields(inputs, [f"el_{f}" for f in lepton_names] + [f"mu_{f}" for f in lepton_names], f"{parquet_path} inputs")
     if "is_electron" in features["lepton"]:
         _require_fields(inputs, ["el_pt", "mu_pt"], f"{parquet_path} inputs")
-    _require_fields(targets, features["target"], f"{parquet_path} targets")
+    if features["target"]:
+        _require_fields(targets, features["target"], f"{parquet_path} targets")
 
     global_arr = np.stack(
         [ak.to_numpy(inputs[f]).astype(np.float32) for f in features["global"]], axis=1
