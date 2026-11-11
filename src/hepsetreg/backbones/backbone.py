@@ -51,11 +51,19 @@ class TransformerBackbone(nn.Module):
         Widths of the raw per-object feature vectors, e.g.
         `len(GLOBAL_FEATURES)`, `len(JET_FEATURES)`, `len(LEPTON_FEATURES)`
         from EventDataset5.py.
+    n_emtops_features : int or None
+        Width of the EMtops per-solution feature vector (see
+        `EventDatasetBase.load_arrays`'s optional `features["EMtops"]`).
+        None (the default) disables this modality entirely -- the batch
+        dict then needs no "EMtops"/"EMtops_mask" keys, and old checkpoints
+        trained without it still load (the type embedding, if enabled, gets
+        3 rows instead of 4, exactly as before).
     d_model, nhead, num_layers, dim_feedforward, dropout :
         Standard `nn.TransformerEncoder` hyperparameters.
     use_type_embedding : bool
-        Add a learned embedding identifying which group (global/jet/lepton)
-        a token came from, so self-attention can tell object types apart.
+        Add a learned embedding identifying which group (global/jet/lepton/
+        EMtops) a token came from, so self-attention can tell object types
+        apart.
     """
 
     def __init__(
@@ -63,6 +71,7 @@ class TransformerBackbone(nn.Module):
         n_global_features,
         n_jet_features,
         n_lepton_features,
+        n_emtops_features=None,
         d_model=128,
         nhead=8,
         num_layers=4,
@@ -77,8 +86,12 @@ class TransformerBackbone(nn.Module):
         self.global_embed = _mlp_embedder(n_global_features, d_model, dropout=dropout)
         self.jet_embed = _mlp_embedder(n_jet_features, d_model, dropout=dropout)
         self.lepton_embed = _mlp_embedder(n_lepton_features, d_model, dropout=dropout)
+        self.emtops_embed = (
+            _mlp_embedder(n_emtops_features, d_model, dropout=dropout) if n_emtops_features else None
+        )
 
-        self.type_embedding = nn.Embedding(3, d_model) if use_type_embedding else None
+        n_types = 4 if self.emtops_embed is not None else 3
+        self.type_embedding = nn.Embedding(n_types, d_model) if use_type_embedding else None
 
         dim_feedforward = dim_feedforward or 4 * d_model
         encoder_layer = nn.TransformerEncoderLayer(
@@ -102,7 +115,10 @@ class TransformerBackbone(nn.Module):
         """
         batch : dict with keys "global" (B, F_g), "jet" (B, N_j, F_j),
             "jet_mask" (B, N_j), "lepton" (B, N_l, F_l), "lepton_mask" (B, N_l)
-            -- exactly what `EventDataset5.collate_fn` produces.
+            -- exactly what `EventDataset5.collate_fn` produces. Plus
+            "EMtops" (B, N_e, F_e) and "EMtops_mask" (B, N_e), but only if
+            this backbone was built with `n_emtops_features` set (otherwise
+            these keys are ignored even if present).
         return_tokens : bool
             If True, also return the full per-token encoded sequence and its
             validity mask -- e.g. for `decoder.py`'s cross-attention decoder,
@@ -139,8 +155,20 @@ class TransformerBackbone(nn.Module):
         jet_tok = jet_tok * jet_mask.unsqueeze(-1).to(jet_tok.dtype)
         lepton_tok = lepton_tok * lepton_mask.unsqueeze(-1).to(lepton_tok.dtype)
 
-        tokens = torch.cat([global_tok, jet_tok, lepton_tok], dim=1)
-        valid_mask = torch.cat([global_mask, jet_mask, lepton_mask], dim=1)
+        tokens = [global_tok, jet_tok, lepton_tok]
+        masks = [global_mask, jet_mask, lepton_mask]
+
+        if self.emtops_embed is not None:
+            emtops_feat, emtops_mask = batch["EMtops"], batch["EMtops_mask"]
+            emtops_tok = self.emtops_embed(emtops_feat)  # (B, N_e, D)
+            if self.type_embedding is not None:
+                emtops_tok = emtops_tok + self.type_embedding.weight[3]
+            emtops_tok = emtops_tok * emtops_mask.unsqueeze(-1).to(emtops_tok.dtype)
+            tokens.append(emtops_tok)
+            masks.append(emtops_mask)
+
+        tokens = torch.cat(tokens, dim=1)
+        valid_mask = torch.cat(masks, dim=1)
 
         key_padding_mask = ~valid_mask
         encoded = self.encoder(tokens, src_key_padding_mask=key_padding_mask)

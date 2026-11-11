@@ -1,0 +1,59 @@
+# Config for: python -m hepsetreg.runs.run_regression --train|--predict --config configs/run_regression_EM.yaml
+#
+# Same as configs/run_regression.yaml, but adds the EMtops input modality --
+# Ellipse Method top/antitop candidate solutions (see HanData/EllipseMethod.cpp,
+# HanData/make_ttbar2L_parquet.py --em-results). features["EMtops"] being set
+# is what makes run_regression.py switch to TTbarEventDataset/
+# TTbarEventDataModule and give TransformerBackbone its extra EMtops tokens
+# (src/hepsetreg/datasets/TTbarEventDataset.py) -- everything else is
+# unchanged from the plain regression config.
+
+# field names as they appear in the parquet file -- shared by train and predict
+features:
+  global: [global_njet, global_nelectron, global_nmuon, global_nbtagged, global_met_met, global_met_phi]
+  jet: [jet_pt, jet_eta, jet_phi, jet_e, jet_m, jet_px, jet_py, jet_pz, jet_bTag]
+  lepton: [pt, eta, phi, e, m, px, py, pz, charge, is_electron]
+  target: [ttbar_mass]
+  # one row per top OR antitop candidate (is_top distinguishes them, same
+  # convention as the lepton modality's is_electron) -- see
+  # HanData/make_ttbar2L_parquet.py's build_em_tops()
+  EMtops:
+    [
+      EMtops_pt, EMtops_eta, EMtops_phi, EMtops_e, EMtops_m,
+      EMtops_px, EMtops_py, EMtops_pz, EMtops_is_top,
+      EMtops_mttbar,
+      EMtops_nu_px, EMtops_nu_py, EMtops_nu_pz,
+      EMtops_nubar_px, EMtops_nubar_py, EMtops_nubar_pz,
+    ]
+
+train:
+  # EM-augmented parquet files (HanData/make_ttbar2L_parquet.py --em-results),
+  # not yet copied into datasets/ like the plain 051026 files setup_bsc downloads
+  train_path: /mnt/iusers01/jw01/c73320es/data/HanData/ttbar-2L_train_EM_111126.parquet
+  val_path: /mnt/iusers01/jw01/c73320es/data/HanData/ttbar-2L_val_EM_111126.parquet
+  batch_size: 4096
+  # model architecture
+  d_model: 128
+  nhead: 8
+  num_layers: 6
+  # training
+  max_epochs: 70
+  learning_rate: 1.0e-3
+  lr_patience: 2
+  early_stop_patience: 5
+  # shape-matching term: null (plain regression), emd, mmd, kl, mmd_joint or sliced_emd
+  shape_metric: null
+  shape_weight: 0.1
+  accelerator: gpu
+  compile_model: true
+
+predict:
+  # fill in the actual run's version_N and checkpoint filename
+  # (Lightning names it epoch=X-step=Y.ckpt by default)
+  checkpoint: tb_logs/event_regression/version_0/checkpoints/REPLACE_ME.ckpt
+  stats: tb_logs/event_regression/version_0/stats.pt
+  data_path: /mnt/iusers01/jw01/c73320es/data/HanData/ttbar-2L_test_EM_111126.parquet
+  batch_size: 4096
+  accelerator: gpu
+  output: ttbar-2L-inference-EM_111126.parquet
+  shape_metric: null  # which distance to report on the test set (null to skip)

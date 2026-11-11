@@ -30,6 +30,7 @@ from hepsetreg.backbones.backbone import TransformerBackbone
 from hepsetreg.backbones.head import EventRegressor, RegressionHead
 from hepsetreg.config import load_config
 from hepsetreg.datasets.EventDatasetBase import EventDataModule, EventDataset, _identity_collate
+from hepsetreg.datasets.TTbarEventDataset import TTbarEventDataModule, TTbarEventDataset
 from hepsetreg.losses.shape_losses import SHAPE_LOSSES
 from hepsetreg.training.lightning_module import EventRegressionModule
 from hepsetreg.training.shape_module import ShapeRegressionModule
@@ -41,12 +42,16 @@ def build_model(config):
     """Builds the model architecture from a config dict (see MODEL_KEYS and
     config["features"]). train() and predict() both call this with the same
     model settings, so a saved checkpoint's weights always match the model
-    they're loaded into."""
+    they're loaded into.
+
+    config["features"]["EMtops"], if set (a non-empty list of field names),
+    adds the Ellipse Method EMtops tokens -- see TTbarEventDataset."""
     features = config["features"]
     backbone = TransformerBackbone(
         n_global_features=len(features["global"]),
         n_jet_features=len(features["jet"]),
         n_lepton_features=len(features["lepton"]),
+        n_emtops_features=len(features["EMtops"]) if features.get("EMtops") else None,
         d_model=config["d_model"],
         nhead=config["nhead"],
         num_layers=config["num_layers"],
@@ -64,7 +69,9 @@ def train(config):
     torch.set_num_threads(4)
     torch.set_float32_matmul_precision("medium")  # allows TF32 matmuls on Ampere+ GPUs
 
-    dm = EventDataModule(
+    use_emtops = bool(config["features"].get("EMtops"))
+    data_module_cls = TTbarEventDataModule if use_emtops else EventDataModule
+    dm = data_module_cls(
         config["train_path"], config["val_path"], features=config["features"], batch_size=config["batch_size"],
     )
 
@@ -100,15 +107,16 @@ def train(config):
     )
     trainer.fit(module, datamodule=dm)
 
-    # Save the z-score stats, max_jets, and model architecture alongside the
-    # checkpoint: predict() needs all three to scale new data and rebuild
-    # the model exactly the way this run did -- it can't guess or refit them.
+    # Save the z-score stats, max_jets (+ max_emtops), and model architecture
+    # alongside the checkpoint: predict() needs all of these to scale new
+    # data and rebuild the model exactly the way this run did -- it can't
+    # guess or refit them.
     model_config = {key: config[key] for key in MODEL_KEYS}
     model_config["features"] = config["features"]
-    torch.save(
-        {"stats": dm.stats, "max_jets": dm.train_dataset.max_jets, "model_config": model_config},
-        f"{logger.log_dir}/stats.pt",
-    )
+    saved = {"stats": dm.stats, "max_jets": dm.train_dataset.max_jets, "model_config": model_config}
+    if use_emtops:
+        saved["max_emtops"] = dm.train_dataset.max_emtops
+    torch.save(saved, f"{logger.log_dir}/stats.pt")
     print(f"done training. checkpoint + stats saved under {logger.log_dir}")
 
 
@@ -118,6 +126,7 @@ def predict(config):
     checkpoint = torch.load(config["checkpoint"], map_location="cpu", weights_only=False)
     saved = torch.load(config["stats"], map_location="cpu")
     stats, max_jets, model_config = saved["stats"], saved["max_jets"], saved["model_config"]
+    use_emtops = bool(model_config["features"].get("EMtops"))
 
     model = build_model(model_config)
     module = EventRegressionModule(model)
@@ -128,7 +137,13 @@ def predict(config):
     module.load_state_dict(state_dict)
 
     target_features = model_config["features"]["target"]
-    ds = EventDataset(config["data_path"], features=model_config["features"], stats=stats, max_jets=max_jets)
+    if use_emtops:
+        ds = TTbarEventDataset(
+            config["data_path"], features=model_config["features"], stats=stats,
+            max_jets=max_jets, max_emtops=saved["max_emtops"],
+        )
+    else:
+        ds = EventDataset(config["data_path"], features=model_config["features"], stats=stats, max_jets=max_jets)
     loader = DataLoader(ds, batch_size=config["batch_size"], shuffle=False, collate_fn=_identity_collate)
 
     # Trainer.predict() puts the module in eval mode, disables gradients,
