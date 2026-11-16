@@ -1,5 +1,7 @@
-# Conditional projected distribution matching
+# Simplified conditional optimal transport for regression correction
 
+This implementation is a **simplified conditional OT (COT) regulariser**, using
+fixed predicted-mass groups and a finite sliced-Wasserstein objective.
 The COT experiment refines a frozen Huber + 0.1 EMD regression model for four
 dileptonic top-pair observables: pair mass, rapidity difference, positive-lepton
 helicity cosine and dilepton opening-angle cosine. A small trainable head
@@ -56,10 +58,45 @@ $$
 $$
 
 where $\mathcal L_{\mathrm{base}}=2\mathcal L_{\mathrm{Huber},\delta=1}+0.1\mathcal L_{\mathrm{marginal}\,W_1}$, with mean reduction over batch events and four coordinates. The factor of two preserves the recorded correction experiment.
-This finite-projection grouped loss does not learn an optimal Monge map and is
-not the univariate $W_1$ used for evaluation. Thirty-two directions supply a
-tractable joint regulariser, not complete identification of a four-dimensional
-distribution.
+The transport component is a finite-projection, grouped sliced-$W_2^2$ penalty
+in standardised coordinates. The evaluation metric is marginal $W_1$ in physical
+coordinates. Their different powers, dimensions and units serve different roles.
+
+## What is simplified relative to a fuller COT formulation?
+
+For context, a population conditional distribution-matching objective can be
+written as
+
+$$
+\mathcal J_{\mathrm{cond}}=
+\mathbb E_C\!\left[
+W_2^2\!\left(P_{\hat{\mathbf z}\mid C},P_{\mathbf z\mid C}\right)
+\right].
+$$
+
+Here $C$ denotes shared conditioning information and $W_2^2$ compares the joint
+four-dimensional distributions. Conditional transport has several formulations
+and numerical solvers; this expression is a useful reference objective, while
+the cited conditional-map paper develops one particular construction.
+
+| Aspect | This simplified COT implementation | A fuller conditional-transport treatment |
+|---|---|---|
+| Conditioning | Three fixed groups from baseline predicted mass | Richer or continuous event information, with a suitable conditional model or estimator |
+| Transport geometry | Average squared sorted differences along 32 fixed one-dimensional projections | A multivariate transport cost between joint conditional distributions |
+| Learned model | Frozen encoder and bounded deterministic correction head, trained with Huber and marginal W1 | A more flexible conditional model or transport map, with its own specified objective and constraints |
+| Computation | Projection and sorting in each batch group | Depends on the solver; a dense pairwise coupling approach needs a cost matrix with one entry per source-target pair |
+
+The three groups retain a broad mass dependence, while averaging over variation
+inside each group. The projections also probe combinations of all four outputs
+at low cost. Increasing the number of directions refines the **sliced**
+Wasserstein estimate; its limiting distance remains sliced Wasserstein rather
+than the unsliced four-dimensional $W_2$. The deterministic correction supplies
+one output per event; a richer conditional distribution model can additionally
+represent event ambiguity through a distribution of possible outputs.
+
+**The training dataset is still used in full:** 4,692,288 training events and
+260,190 validation events in the recorded study. The simplification concerns
+the conditioning, transport objective and trainable model, not data subsampling.
 
 ## Using the module
 
@@ -97,21 +134,22 @@ method. The recorded study used validation-selected checkpoints and one seed.
 
 ## Literature
 
-The projected, sorted-sample construction follows the sliced-Wasserstein
-literature. The fixed predicted-mass grouping is this project's application of
-that construction, rather than a reproduction of a named conditional-transport
-model from the cited papers.
+The four references, their roles in this implementation and direct paper links
+are included in [conditional_ot_references.md](conditional_ot_references.md).
+Ready-to-use citations are in [conditional_ot_references.bib](conditional_ot_references.bib).
 
-1. I. Deshpande, Z. Zhang and A. G. Schwing, *Generative Modeling Using the Sliced
-   Wasserstein Distance*, CVPR (2018), 3483–3491.
-   [Paper](https://openaccess.thecvf.com/content_cvpr_2018/papers/Deshpande_Generative_Modeling_Using_CVPR_2018_paper.pdf)
-2. M. Rowland et al., *Orthogonal Estimation of Wasserstein Distances*, AISTATS
-   (2019), PMLR 89, 186–195.
-   [Paper and metadata](https://proceedings.mlr.press/v89/rowland19a.html)
+- **Tabak, Trigila and Zhao (2021)**: conditional transport between distributions
+  sharing covariates. [Article](https://doi.org/10.1007/s10994-021-06060-0).
+- **Deshpande, Zhang and Schwing (2018)**: learning with sliced Wasserstein
+  objectives. [Paper](https://arxiv.org/abs/1803.11188).
+- **Rowland et al. (2019)**: projection-based Wasserstein estimation and sampling
+  schemes. [Paper](https://proceedings.mlr.press/v89/rowland19a.html).
+- **Peyre and Cuturi (2019)**: transport couplings, maps and numerical methods.
+  [Monograph](https://arxiv.org/abs/1803.00567).
 
-The present implementation uses fixed Gaussian unit directions, not the
-orthogonal estimator investigated in reference 2. Both sources provide relevant
-context; no claim of implementing every construction from either paper is made.
+The fixed mass groups and bounded regression correction are the project-specific
+design. The present projections are seeded normalised Gaussian vectors; Rowland
+et al. also study alternative, orthogonally sampled directions.
 
 ## Connecting a trained HepSetReg model
 
