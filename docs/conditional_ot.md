@@ -1,7 +1,7 @@
 # Simplified conditional optimal transport for regression correction
 
-This implementation is a **simplified conditional OT (COT) regulariser**, using
-fixed predicted-mass groups and a finite sliced-Wasserstein objective.
+This implementation is a **simplified conditional OT (COT) regulariser**.
+It compares predicted and true distributions within fixed predicted-mass groups.
 The COT experiment refines a frozen Huber + 0.1 EMD regression model for four
 dileptonic top-pair observables: pair mass, rapidity difference, positive-lepton
 helicity cosine and dilepton opening-angle cosine. A small trainable head
@@ -24,7 +24,20 @@ and their corresponding truth values. The truths are **not independently grouped
 by true mass**. This is a coarse conditioning variable derived from detector-side
 information, rather than conditioning the discrepancy on every measured input.
 
-## Project, sort and compare
+## What does "sliced" mean here?
+
+Each event has four numbers: the four standardised observables. We multiply them
+by a chosen set of weights and add them up, giving one score per event. We do
+this for predictions and truth using the same weights, sort the two score lists
+separately, and compare the lowest score with the lowest, the next with the next,
+and so on. We then change the weights and repeat, averaging the resulting costs.
+
+Each weighted sum is a one-dimensional **projection**, also called a **slice**
+in sliced Wasserstein. It combines the four observables; it does not select a
+subset of events or split the training dataset. Different weights examine
+different combinations of the observables.
+
+## Exact loss and settings
 
 Write the four standardised prediction and truth as $\hat{\mathbf z}_i$ and
 $\mathbf z_i$. With 32 fixed unit directions $\mathbf v_\ell$, form the scalar
@@ -62,41 +75,35 @@ The transport component is a finite-projection, grouped sliced-$W_2^2$ penalty
 in standardised coordinates. The evaluation metric is marginal $W_1$ in physical
 coordinates. Their different powers, dimensions and units serve different roles.
 
-## What is simplified relative to a fuller COT formulation?
+## How does this differ from full four-dimensional transport?
 
-For context, a population conditional distribution-matching objective can be
-written as
+The key difference is the matching inside each group. For equally sized,
+equally weighted batches, **full four-dimensional OT finds one matching** between
+predicted and true events that minimises the total squared differences across
+all four standardised observables. Every coordinate contributes to that same
+matching. More general sample weights use a transport coupling.
 
-$$
-\mathcal J_{\mathrm{cond}}=
-\mathbb E_C\!\left[
-W_2^2\!\left(P_{\hat{\mathbf z}\mid C},P_{\mathbf z\mid C}\right)
-\right].
-$$
+**Our simplified calculation finds a separate sorted matching for each score.**
+A predicted event can be matched to one truth event for one set of weights and
+to a different truth event for another. Sorting these one-number lists is cheap,
+but their average cost is a different objective from finding one joint matching
+in four dimensions. A finite set of scores can also miss differences between
+the joint distributions. Adding more scores improves coverage; the resulting
+distance remains sliced Wasserstein rather than the full four-dimensional
+Wasserstein distance.
 
-Here $C$ denotes shared conditioning information and $W_2^2$ compares the joint
-four-dimensional distributions. Conditional transport has several formulations
-and numerical solvers; this expression is a useful reference objective, while
-the cited conditional-map paper develops one particular construction.
+Both calculations can use the same mass groups. Using richer detector
+information to define the conditions would be a separate extension; it is not
+a requirement for doing full four-dimensional transport. Likewise, freezing the
+encoder and bounding the correction head are model choices in this experiment.
+The paired Huber term keeps each prediction tied to its own event's truth while
+the transport term compares distributions.
 
-| Aspect | This simplified COT implementation | A fuller conditional-transport treatment |
-|---|---|---|
-| Conditioning | Three fixed groups from baseline predicted mass | Richer or continuous event information, with a suitable conditional model or estimator |
-| Transport geometry | Average squared sorted differences along 32 fixed one-dimensional projections | A multivariate transport cost between joint conditional distributions |
-| Learned model | Frozen encoder and bounded deterministic correction head, trained with Huber and marginal W1 | A more flexible conditional model or transport map, with its own specified objective and constraints |
-| Computation | Projection and sorting in each batch group | Depends on the solver; a dense pairwise coupling approach needs a cost matrix with one entry per source-target pair |
-
-The three groups retain a broad mass dependence, while averaging over variation
-inside each group. The projections also probe combinations of all four outputs
-at low cost. Increasing the number of directions refines the **sliced**
-Wasserstein estimate; its limiting distance remains sliced Wasserstein rather
-than the unsliced four-dimensional $W_2$. The deterministic correction supplies
-one output per event; a richer conditional distribution model can additionally
-represent event ambiguity through a distribution of possible outputs.
-
-**The training dataset is still used in full:** 4,692,288 training events and
-260,190 validation events in the recorded study. The simplification concerns
-the conditioning, transport objective and trainable model, not data subsampling.
+**"Full transport" and "full dataset" mean different things.** Full transport
+here means comparing all four coordinates together in one transport problem.
+The recorded simplified-COT run already uses all 4,692,288 training events and
+260,190 validation events. The computational saving comes from the simpler
+distribution comparison, not from using fewer events.
 
 ## Using the module
 
