@@ -2,6 +2,14 @@
 
 This branch is for BSc projects hosted at University of Manchester in Autumn 2026.
 
+## Optional conditional distribution correction
+
+The [conditional OT note](docs/conditional_ot.md) describes a fixed predicted-mass
+partition and a grouped sliced-Wasserstein loss for four-observable regression.
+The [runnable example](examples/conditional_ot_correction.py) shows a frozen
+baseline with a bounded correction head and the full study objective. This is an
+optional extension; the existing training commands and defaults are unchanged.
+
 > [!CAUTION]
 > Commands in this notebook are specific to the University of Manchester CSF3 cluster and will not run elsewhere.
 
